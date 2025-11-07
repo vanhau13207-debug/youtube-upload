@@ -1,0 +1,56 @@
+name: Auto Upload 3 Chill Videos Daily
+
+on:
+  schedule:
+    # 8:00 AM PST (23:00 VN)
+    - cron: "0 16 * * *"
+    # 12:00 PM PST (03:00 VN)
+    - cron: "0 20 * * *"
+    # 6:00 PM PST (09:00 VN)
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate & Upload (1 video)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o-mini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_PRIVACY: public
+          VIDEOS_PER_RUN: "1"   # 1 lần chạy = 1 video; chạy 3 lần/ngày => 3 video
+          USE_COQUI: "0"        # để 0 cho nhanh; muốn Coqui thì đổi 1 + thêm TTS vào requirements
+        run: |
+          python workspace/allinone.py
+
+      - name: Upload artifacts (video & logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outputs-${{ github.run_id }}
+          path: output/**/*
+
