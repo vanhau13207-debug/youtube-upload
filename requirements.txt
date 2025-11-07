@@ -1,6 +1,8 @@
-# Coqui TTS pinned with dependencies to avoid backtracking
-torch==2.0.1
-torchaudio==2.0.2
+# ✅ Phiên bản nhẹ hơn để chạy ổn trên GitHub Actions
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.0.1+cpu
+torchaudio==2.0.2+cpu
 TTS==0.15.6
 numpy==1.24.4
 requests==2.32.3
