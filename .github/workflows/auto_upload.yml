@@ -1,12 +1,11 @@
 name: Auto Upload 3 Chill Videos Daily
 
 on:
-  workflow_dispatch:  # Cho phép chạy thủ công
+  workflow_dispatch:
   schedule:
-    # 3 khung giờ vàng YouTube US (sẽ tự động chạy mỗi ngày)
     - cron: "0 16 * * *"   # 23:00 VN
     - cron: "0 20 * * *"   # 03:00 VN
-    - cron: "0 2 * * *"    # 09:00 VN
+    - cron: "0 2  * * *"   # 09:00 VN
 
 jobs:
   build-and-run:
@@ -14,7 +13,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        python-version: [3.10]   # ép Python 3.10 để tránh lỗi TTS/numpy
+        python-version: [3.10]   # Ép Python 3.10 cho TTS
 
     steps:
       - name: Checkout
@@ -30,10 +29,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg git curl build-essential python3-dev libsndfile1
 
+      # ✅ Cố định các phiên bản dễ xung đột (numpy cho TTS 0.15.6, v.v.)
+      - name: Create constraints (pin versions)
+        run: |
+          echo "numpy==1.22.0" > constraints.txt
+
+      # ✅ Cài torch CPU riêng (nhanh, ổn định) rồi mới cài phần còn lại theo constraints
       - name: Install Python requirements
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements.txt
+          pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch==2.0.1+cpu torchaudio==2.0.2+cpu
+          pip install --no-cache-dir --use-deprecated=legacy-resolver -c constraints.txt -r requirements.txt
 
       - name: Run Auto Chill Story Tool
         env:
@@ -52,7 +58,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: chill_videos
+          name: chill_videos_${{ github.run_id }}
           path: |
             workspace/output/**
             workspace/logs/**
