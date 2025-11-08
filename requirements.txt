@@ -1,16 +1,16 @@
-# ✅ Coqui TTS ổn định cho Python 3.10
+# ✅ Coqui TTS stable version for Python 3.10
 torch==2.0.1
 torchaudio==2.0.2
 TTS==0.15.6
 
-# 🎧 Âm thanh / render
+# 🎧 Audio + Video
 numpy==1.23.5
 scipy==1.10.1
 soundfile==0.12.1
 Pillow==10.4.0
 moviepy==1.0.3
 
-# ⚙️ Hỗ trợ
+# ⚙️ Utilities
 requests==2.32.3
 tqdm==4.66.5
 python-dotenv==1.0.1
