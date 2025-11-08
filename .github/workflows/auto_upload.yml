@@ -3,19 +3,23 @@ name: Auto Upload 3 Chill Videos Daily
 on:
   workflow_dispatch:
   schedule:
-    # chạy mỗi ngày lúc 08:00 UTC (15h VN)
-    - cron: "0 8 * * *"
+    # 3 lần/ngày: 01h, 09h, 16h UTC (tức 8h, 16h, 23h giờ VN)
+    - cron: "0 1,9,16 * * *"
 
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Clear old setup-python cache
+        run: |
+          sudo rm -rf /opt/hostedtoolcache/Python
+
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -30,16 +34,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-      - name: Run Auto Chill Story Tool
+      - name: Generate & Render 3 Chill Videos
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          YT_UPLOAD: "false"       # đổi thành "true" nếu muốn auto upload
-          TARGET_DURATION: "600"   # 600s = 10 phút; đổi 3600 nếu muốn video 1 tiếng
+          YT_UPLOAD: "false"       # bật true nếu muốn upload tự động
+          TARGET_DURATION: "600"   # 10 phút mỗi video
         run: |
-          python workspace/allinone.py
+          echo "=== Starting 3 chill video renders ==="
+          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds"
+          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm"
+          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe"
+          echo "=== All videos generated successfully ==="
 
       - name: Upload artifacts (video & logs)
         uses: actions/upload-artifact@v4
