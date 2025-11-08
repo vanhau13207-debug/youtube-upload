@@ -68,7 +68,12 @@ jobs:
           python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "❌ Lỗi video 2"
           python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "❌ Lỗi video 3"
           echo "=== ✅ Hoàn tất render ==="
-          ls -R workspace/output || echo "⚠️ Không tìm thấy output"
+
+          echo "🧾 Kiểm tra output:"
+          ls -R workspace/output || echo "⚠️ Không có file nào trong workspace/output"
+
+          echo "🧾 Kiểm tra dung lượng thư mục workspace:"
+          du -h workspace | tail -n 20
 
       - name: Upload artifacts (video & logs)
         if: always()
