@@ -35,6 +35,7 @@ jobs:
           sudo apt-get install -y ffmpeg libsndfile1 espeak-ng
           python -m pip install --upgrade pip
           pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements_final.txt
+          pip install pillow==9.5.0 moviepy==1.0.3
           pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2 google-api-python-client google-auth-oauthlib google-auth-httplib2
 
       - name: 🎬 Generate Chill Video (2h)
