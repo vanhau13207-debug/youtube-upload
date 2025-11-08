@@ -11,25 +11,27 @@ from PIL import Image, ImageDraw, ImageFont
 OUTPUT_DIR = "workspace/output"
 ASSETS_DIR = "workspace/assets"
 RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
-
-# Nếu file mưa chưa có, tự tải về từ link an toàn
-if not os.path.exists(RAIN_SOUND) or os.path.getsize(RAIN_SOUND) < 1000:
-    print("🌧️ Rain sound not found, downloading fallback...")
-    os.makedirs(ASSETS_DIR, exist_ok=True)
-    try:
-        os.system("curl -L -o workspace/assets/rain.mp3 https://huggingface.co/datasets/hauntedai/audio-sfx/resolve/main/rain_soft.mp3?download=true")
-        print("✅ Rain sound downloaded successfully.")
-    except Exception as e:
-        print("⚠️ Failed to download rain.mp3:", e)
-
 FONT_PATH = os.path.join(ASSETS_DIR, "font.ttf")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(ASSETS_DIR, exist_ok=True)
 
 DURATION_MINUTES = int(os.getenv("TARGET_DURATION", 10))
 DURATION_SECONDS = DURATION_MINUTES * 60
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 YT_UPLOAD = os.getenv("YT_UPLOAD", "false").lower() == "true"
+
+# === AUTO DOWNLOAD RAIN SOUND ===
+if not os.path.exists(RAIN_SOUND) or os.path.getsize(RAIN_SOUND) < 1000:
+    print("🌧️ Rain sound not found, downloading fallback...")
+    try:
+        os.system(
+            "curl -L -o workspace/assets/rain.mp3 "
+            "https://huggingface.co/datasets/hauntedai/audio-sfx/resolve/main/rain_soft.mp3?download=true"
+        )
+        print("✅ Rain sound downloaded successfully.")
+    except Exception as e:
+        print("⚠️ Failed to download rain.mp3:", e)
 
 
 # === STORY GENERATION ===
@@ -37,17 +39,16 @@ def generate_story(seed):
     prompt = f"Write a calm, soothing bedtime story in English about: {seed}. Tone: peaceful, emotional, cinematic."
     print(f"🪶 Generating story with prompt: {prompt}")
 
-    res = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.8,
-        },
-    )
-
     try:
+        res = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.8,
+            },
+        )
         data = res.json()
         if "choices" in data:
             return data["choices"][0]["message"]["content"].strip()
@@ -95,29 +96,26 @@ Tags: chill, rain, relax, sleep, study, calm, asmr, peaceful, bedtime, ambience"
     return title, desc, tags
 
 
-def generate_thumbnail(title):
+def generate_thumbnail(title, thumb_path):
     print(f"🖼️ Generating thumbnail for: {title}")
-    prompt = f"cinematic cozy rainy night scene, title: {title}"
+    prompt = f"cinematic cozy rainy night scene, soft lighting, titled: {title}"
     try:
         url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
         img = requests.get(url).content
-        path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
-        with open(path, "wb") as f:
+        with open(thumb_path, "wb") as f:
             f.write(img)
-        return path
+        return thumb_path
     except:
         thumb = Image.new("RGB", (1280, 720), (20, 20, 20))
         draw = ImageDraw.Draw(thumb)
         draw.text((50, 350), title, fill="white", font=ImageFont.truetype(FONT_PATH, 50))
-        fallback = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
-        thumb.save(fallback)
-        return fallback
+        thumb.save(thumb_path)
+        return thumb_path
 
 
-# === AUDIO (fake placeholder, replace with real TTS later) ===
+# === AUDIO (placeholder) ===
 def synthesize_audio(story_text, out_path):
     print("🎙️ Creating fake audio track (placeholder)...")
-    # (Trong GitHub Action không synthesize thực — dùng rain sound làm nền)
     os.system(f"cp {RAIN_SOUND} {out_path}")
     return out_path
 
@@ -127,10 +125,14 @@ def render_video(seed):
     print(f"🎬 Rendering video for seed: {seed}")
     story = generate_story(seed)
     title, desc, tags = generate_seo(story)
-    thumb_path = generate_thumbnail(title)
 
-    story_audio = os.path.join(OUTPUT_DIR, "voice.wav")
+    safe_name = seed.replace(" ", "_").replace(",", "_")
+    story_audio = os.path.join(OUTPUT_DIR, f"{safe_name}_voice.wav")
+    thumb_path = os.path.join(OUTPUT_DIR, f"{safe_name}_thumb.jpg")
+    output_path = os.path.join(OUTPUT_DIR, f"{safe_name}.mp4")
+
     synthesize_audio(story, story_audio)
+    generate_thumbnail(title, thumb_path)
 
     try:
         # Load ảnh thumbnail và tiếng mưa
@@ -138,13 +140,11 @@ def render_video(seed):
         voice_clip = AudioFileClip(story_audio).volumex(0.6)
         rain_clip = AudioFileClip(RAIN_SOUND).volumex(0.3)
 
-        # Hòa trộn âm thanh
-        final_audio = voice_clip.set_duration(DURATION_SECONDS).audio_fadeout(2)
-        mixed_audio = final_audio.set_duration(DURATION_SECONDS).fx(lambda a: a).volumex(1.0)
-        img_clip = img_clip.set_audio(mixed_audio)
+        # Kết hợp âm thanh
+        final_audio = voice_clip.set_duration(DURATION_SECONDS)
+        img_clip = img_clip.set_audio(final_audio)
 
         # Xuất video MP4
-        output_path = os.path.join(OUTPUT_DIR, f"{seed.replace(' ', '_')}.mp4")
         print(f"💾 Saving video to {output_path} ...")
         img_clip.write_videofile(
             output_path,
@@ -162,7 +162,6 @@ def render_video(seed):
         return None
 
 
-
 # === MAIN ===
 if __name__ == "__main__":
     import argparse
@@ -174,8 +173,6 @@ if __name__ == "__main__":
     try:
         render_video(args.seed)
     except Exception as e:
-        print("❌ Render failed:", e)
+        print("❌ Critical error:", e)
 
     print("🎉 Done.")
-
-
