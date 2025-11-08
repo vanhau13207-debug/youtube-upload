@@ -3,8 +3,7 @@ name: Auto Upload 3 Chill Videos Daily
 on:
   workflow_dispatch:
   schedule:
-    # 3 lần/ngày: 01h, 09h, 16h UTC (tức 8h, 16h, 23h VN)
-    - cron: "0 1,9,16 * * *"
+    - cron: "0 1,9,16 * * *"  # 3 lần/ngày: 01,09,16 UTC
 
 jobs:
   build-and-run:
@@ -12,8 +11,22 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Debug — show repo root & files
+        run: |
+          echo "PWD: $(pwd)"
+          echo "---- root files ----"
+          ls -la
+          echo "---- recursive ls (top 2) ----"
+          ls -la | sed -n '1,200p'
+          echo "---- git tracked files ----"
+          git rev-parse --show-toplevel || true
+          git status --porcelain || true
+          git ls-files | sed -n '1,200p'
 
       - name: Clear old Python caches
         run: |
@@ -30,10 +43,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Install Python requirements (safe install)
+      - name: Check requirements file content (if exists) and install deps
+        id: install_reqs
         run: |
-          python -m pip install --upgrade pip
-          pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements.txt
+          echo "Looking for requirements.txt in repo root..."
+          if [ -f "./requirements.txt" ]; then
+            echo "FOUND requirements.txt — printing head (first 200 lines):"
+            sed -n '1,200p' requirements.txt || true
+            echo "Installing from requirements.txt ..."
+            python -m pip install --upgrade pip
+            # safe install with legacy resolver to help older dependency pinning if needed
+            python -m pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements.txt
+          else
+            echo "requirements.txt NOT FOUND — falling back to explicit pip install (safe list)"
+            python -m pip install --upgrade pip
+            python -m pip install --no-cache-dir \
+              openai requests pydub ffmpeg-python Pillow \
+              coqui-tts numpy==1.24.4 numba==0.57.0 soundfile || true
+            # Log installed pip list
+            python -m pip freeze | sed -n '1,200p'
+          fi
 
       - name: Generate & Render 3 Chill Videos
         env:
@@ -41,23 +70,18 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          YT_UPLOAD: "false"       # bật true nếu muốn auto upload
-          TARGET_DURATION: "600"   # 10 phút mỗi video
+          YT_UPLOAD: "false"
+          TARGET_DURATION: "600"
         run: |
           echo "=== 🚀 Bắt đầu tạo 3 video chill ==="
-          mkdir -p workspace/output
-          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds" || echo "❌ Lỗi video 1"
-          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "❌ Lỗi video 2"
-          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "❌ Lỗi video 3"
-          echo "=== ✅ Hoàn tất 3 video ==="
-          ls -R workspace/output || echo "⚠️ Không tìm thấy output"
+          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds" || echo "video1 failed"
+          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "video2 failed"
+          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "video3 failed"
+          echo "=== ✅ Hoàn tất renders (hoặc bỏ qua lỗi render) ==="
 
-      - name: Upload artifacts (video & logs)
-        if: always()
+      - name: Upload output artifacts
         uses: actions/upload-artifact@v4
         with:
           name: chill-video-output
-          path: |
-            workspace/output/
-            workspace/*.log
-          retention-days: 3
+          path: workspace/output/**
+
