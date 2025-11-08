@@ -15,10 +15,9 @@ jobs:
       - name: 🧩 Checkout repo
         uses: actions/checkout@v4
 
-      - name: 🧹 Clear old caches
-        run: |
-          sudo rm -rf /opt/hostedtoolcache/Python || true
-          python3 -m pip cache purge || true
+      - name: 🧹 Clean pip cache only
+        run: python3 -m pip cache purge || true
+
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
