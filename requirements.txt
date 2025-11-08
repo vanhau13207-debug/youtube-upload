@@ -1,16 +1,16 @@
-# ✅ Coqui TTS - phiên bản ổn định cho Python 3.10 / Ubuntu 24.04
+# ✅ Coqui TTS ổn định cho Python 3.10
 torch==2.0.1
 torchaudio==2.0.2
 TTS==0.15.6
 
-# 🎧 Xử lý âm thanh, hình ảnh, render video
+# 🎧 Âm thanh / render
 numpy==1.23.5
 scipy==1.10.1
 soundfile==0.12.1
 Pillow==10.4.0
 moviepy==1.0.3
 
-# 🌐 HTTP, async, tiện ích
+# ⚙️ Hỗ trợ
 requests==2.32.3
 tqdm==4.66.5
 python-dotenv==1.0.1
