@@ -46,10 +46,11 @@ jobs:
         run: |
           echo "=== 🚀 Bắt đầu tạo 3 video chill ==="
           mkdir -p workspace/output
-          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds"
-          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm"
-          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe"
+          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds" || echo "❌ Lỗi video 1"
+          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "❌ Lỗi video 2"
+          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "❌ Lỗi video 3"
           echo "=== ✅ Hoàn tất 3 video ==="
+          ls -R workspace/output || echo "⚠️ Không tìm thấy output"
 
       - name: Upload artifacts (video & logs)
         if: always()
@@ -57,5 +58,6 @@ jobs:
         with:
           name: chill-video-output
           path: |
-            workspace/output/**
+            workspace/output/
             workspace/*.log
+          retention-days: 3
