@@ -1,3 +1,4 @@
+# Compatible with Coqui TTS 0.15.6 and Python 3.10
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.0.1+cpu
 torchaudio==2.0.2+cpu
@@ -9,3 +10,9 @@ scipy==1.10.1
 soundfile==0.12.1
 numba==0.57.1
 llvmlite==0.40.1
+openai
+moviepy
+pydub
+google-auth
+google-auth-oauthlib
+google-api-python-client
