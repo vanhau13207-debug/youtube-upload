@@ -9,16 +9,16 @@ from PIL import Image, ImageDraw, ImageFont
 
 # === CONFIG ===
 OUTPUT_DIR = "workspace/output"
-TTS_MODEL = "tts_models/en/vctk/vits"
-RAIN_SOUND = "workspace/assets/rain.mp3"
-FONT_PATH = "workspace/assets/font.ttf"
-DURATION_MINUTES = int(os.getenv("TARGET_DURATION", 10))
-
-# === KEYS ===
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-YT_UPLOAD = os.getenv("YT_UPLOAD", "false").lower() == "true"
+ASSETS_DIR = "workspace/assets"
+RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
+FONT_PATH = os.path.join(ASSETS_DIR, "font.ttf")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+DURATION_MINUTES = int(os.getenv("TARGET_DURATION", 10))
+DURATION_SECONDS = DURATION_MINUTES * 60
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+YT_UPLOAD = os.getenv("YT_UPLOAD", "false").lower() == "true"
 
 
 # === STORY GENERATION ===
@@ -28,10 +28,7 @@ def generate_story(seed):
 
     res = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
         json={
             "model": "gpt-3.5-turbo",
             "messages": [{"role": "user", "content": prompt}],
@@ -42,19 +39,16 @@ def generate_story(seed):
     try:
         data = res.json()
         if "choices" in data:
-            story = data["choices"][0]["message"]["content"].strip()
+            return data["choices"][0]["message"]["content"].strip()
         else:
-            print("⚠️ API response error:", data)
-            story = "Once upon a time, on a rainy evening, everything felt calm and warm..."
+            print("⚠️ GPT returned:", data)
+            return "Once upon a calm night, gentle rain whispered outside the window..."
     except Exception as e:
-        print("❌ Error parsing GPT response:", e)
-        print("Response text:", res.text)
-        story = "A soft rain fell outside as the city lights flickered gently..."
-
-    return story
+        print("❌ GPT Error:", e)
+        return "A soft rain fell outside as the city lights flickered gently..."
 
 
-# === SEO GENERATION ===
+# === SEO + THUMBNAIL ===
 def generate_seo(story):
     prompt = f"""
     Based on this chill bedtime story:
@@ -62,18 +56,14 @@ def generate_seo(story):
     {story[:800]}
     ---
     Write:
-    1. A YouTube title (max 80 chars, highly clickable, chill tone)
-    2. A YouTube description (2 paragraphs)
+    1. YouTube title (max 80 chars)
+    2. Description (2 short paragraphs)
     3. 10 SEO tags separated by commas
     """
-
     try:
         res = requests.post(
             "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "gpt-3.5-turbo",
                 "messages": [{"role": "user", "content": prompt}],
@@ -81,44 +71,80 @@ def generate_seo(story):
             },
         )
         data = res.json()
-        content = data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print("⚠️ SEO generation failed:", e)
-        content = f"""
-Title: Chill Rainy Night Story 🌧️ Peaceful Ambience
-Description: A calm storytelling video with gentle rain sounds — perfect for sleep, relaxation, or study.
-Tags: chill, rain sounds, relaxation, sleep, ambient, storytelling, calm music, ASMR, cozy night, peaceful vibes
-        """
+        text = data["choices"][0]["message"]["content"]
+    except:
+        text = """Title: Rainy Night Story
+Description: Calm storytelling with gentle rain — perfect for relaxation or sleep.
+Tags: chill, rain, relax, sleep, study, calm, asmr, peaceful, bedtime, ambience"""
 
-    lines = content.strip().split("\n")
+    lines = text.split("\n")
     title = lines[0].replace("Title:", "").strip()
-    description = "\n".join(lines[1:]).replace("Description:", "").strip()
-    tags = ",".join([x.strip() for x in description.split(",")[-10:]])
+    desc = "\n".join(lines[1:]).replace("Description:", "").strip()
+    tags = ",".join([x.strip() for x in desc.split(",")[-10:]])
+    return title, desc, tags
 
-    return title, description, tags
 
-
-# === THUMBNAIL AI ===
 def generate_thumbnail(title):
-    print(f"🖼️ Generating AI thumbnail for: {title}")
-    prompt = f"cinematic cozy rainy night scene with soft lighting, for a chill story titled: {title}"
+    print(f"🖼️ Generating thumbnail for: {title}")
+    prompt = f"cinematic cozy rainy night scene, title: {title}"
+    try:
+        url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
+        img = requests.get(url).content
+        path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+        with open(path, "wb") as f:
+            f.write(img)
+        return path
+    except:
+        thumb = Image.new("RGB", (1280, 720), (20, 20, 20))
+        draw = ImageDraw.Draw(thumb)
+        draw.text((50, 350), title, fill="white", font=ImageFont.truetype(FONT_PATH, 50))
+        fallback = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+        thumb.save(fallback)
+        return fallback
+
+
+# === AUDIO (fake placeholder, replace with real TTS later) ===
+def synthesize_audio(story_text, out_path):
+    print("🎙️ Creating fake audio track (placeholder)...")
+    # (Trong GitHub Action không synthesize thực — dùng rain sound làm nền)
+    os.system(f"cp {RAIN_SOUND} {out_path}")
+    return out_path
+
+
+# === VIDEO RENDER ===
+def render_video(seed):
+    print(f"🎬 Rendering video for seed: {seed}")
+    story = generate_story(seed)
+    title, desc, tags = generate_seo(story)
+    thumb_path = generate_thumbnail(title)
+
+    story_audio = os.path.join(OUTPUT_DIR, "voice.wav")
+    synthesize_audio(story, story_audio)
+
+    rain_clip = AudioFileClip(RAIN_SOUND).volumex(0.4)
+    voice_clip = AudioFileClip(story_audio).volumex(0.6)
+    final_audio = CompositeVideoClip([]).set_audio(voice_clip.set_duration(DURATION_SECONDS)).audio.set_duration(DURATION_SECONDS)
+
+    img_clip = ImageClip(thumb_path).set_duration(DURATION_SECONDS)
+    img_clip = img_clip.set_audio(voice_clip)
+    output_path = os.path.join(OUTPUT_DIR, f"{seed.replace(' ', '_')}.mp4")
+
+    img_clip.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
+    print(f"✅ Rendered: {output_path}")
+    return output_path
+
+
+# === MAIN ===
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=str, required=False, default="rainy night story")
+    args = parser.parse_args()
 
     try:
-        img_url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
-        thumb_path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
-        img_data = requests.get(img_url).content
-        with open(thumb_path, "wb") as f:
-            f.write(img_data)
-        return thumb_path
+        render_video(args.seed)
     except Exception as e:
-        print("⚠️ Thumbnail generation failed:", e)
-        fallback = Image.new("RGB", (1280, 720), color=(30, 30, 30))
-        draw = ImageDraw.Draw(fallback)
-        draw.text((50, 300), title, fill="white", font=ImageFont.truetype(FONT_PATH, 48))
-        fallback.save(os.path.join(OUTPUT_DIR, "thumbnail.jpg"))
-        return os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+        print("❌ Render failed:", e)
 
-
-# === AUDIO SYNTHESIS ===
-def synthesize_audio(text, out_path="voice.wav"):
-    pri
+    print("🎉 Done.")
