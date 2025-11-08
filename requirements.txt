@@ -1,9 +1,9 @@
-# ✅ Stable Coqui TTS setup (no dependency conflict)
+# ✅ Stable Coqui TTS + Render Setup (no dependency conflicts)
 torch==2.0.1
 torchaudio==2.0.2
 TTS==0.15.6
 
-# 🎧 Audio & Render
+# 🎧 Audio + Render
 numpy==1.23.5
 scipy==1.10.1
 soundfile==0.12.1
@@ -15,4 +15,3 @@ requests==2.32.3
 tqdm==4.66.5
 python-dotenv==1.0.1
 aiohttp==3.9.5
-
