@@ -1,86 +1,81 @@
-import os, random, json, requests, time
+import os, json, requests, time
 from TTS.api import TTS
 from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 
-# === CONFIG ===
 OUTPUT_DIR = "workspace/output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-YT_UPLOAD = os.getenv("YT_UPLOAD", "false").lower() == "true"
 TARGET_DURATION = int(os.getenv("TARGET_DURATION", "600"))
+YT_UPLOAD = os.getenv("YT_UPLOAD", "false").lower() == "true"
 
-# === 1. Generate Story ===
+# === 1. Sinh truyện ===
 def generate_story(seed):
-    prompt = f"Write a relaxing English bedtime story based on: {seed}. Make it gentle, cozy, and vivid for YouTube narration."
-    headers = {"Authorization": f"Bearer {OPENAI_KEY}"}
+    prompt = f"Write a relaxing English bedtime story about {seed}. Make it cozy, imaginative, and peaceful, perfect for YouTube narration."
     res = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers=headers,
+        headers={"Authorization": f"Bearer {OPENAI_KEY}"},
         json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
     )
-    story = res.json()["choices"][0]["message"]["content"]
-    return story.strip()
+    return res.json()["choices"][0]["message"]["content"].strip()
 
-# === 2. Text to Speech (Coqui) ===
-def story_to_audio(text, out_path="output.wav"):
+# === 2. Text-to-speech ===
+def story_to_audio(text, out_path="voice.wav"):
     tts = TTS("tts_models/en/vctk/vits")
     tts.tts_to_file(text=text, file_path=out_path)
 
-# === 3. Generate thumbnail (AI) ===
+# === 3. Thumbnail AI ===
 def generate_thumbnail(title):
-    img_path = os.path.join(OUTPUT_DIR, f"{title[:40].replace(' ','_')}.jpg")
+    img_path = os.path.join(OUTPUT_DIR, f"{title[:40].replace(' ', '_')}.jpg")
     try:
-        res = requests.post(
+        r = requests.post(
             "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2",
-            headers={"Authorization": "Bearer hf_jGQiExampleFakeKey"},
-            json={"inputs": f"A cozy chill YouTube thumbnail for {title}, cinematic lighting, rain, storytime, peaceful vibe"}
+            headers={"Authorization": "Bearer hf_fakeapikey"},
+            json={"inputs": f"A cinematic chill YouTube thumbnail for '{title}', cozy rain, ambient light, peaceful mood"}
         )
         with open(img_path, "wb") as f:
-            f.write(res.content)
-    except Exception:
-        Image.new("RGB", (1280, 720), (30, 30, 30)).save(img_path)
+            f.write(r.content)
+    except:
+        Image.new("RGB", (1280, 720), (40, 40, 40)).save(img_path)
     return img_path
 
-# === 4. Generate SEO metadata ===
+# === 4. SEO metadata ===
 def auto_seo(title):
-    prompt = f"Generate a YouTube title, description, and tags for: {title}. Focus on SEO, English, cozy, rain, chill storytelling niche."
-    headers = {"Authorization": f"Bearer {OPENAI_KEY}"}
-    res = requests.post(
+    prompt = f"Generate a YouTube title, description, and tags in English for: {title}. Focus on rain sounds, storytelling, relaxing, and SEO optimization."
+    r = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers=headers,
+        headers={"Authorization": f"Bearer {OPENAI_KEY}"},
         json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
     )
-    data = res.json()["choices"][0]["message"]["content"]
-    return data
+    return r.json()["choices"][0]["message"]["content"]
 
-# === 5. Render Video ===
-def render_video(audio_path, thumbnail_path, title):
+# === 5. Render video ===
+def render_video(audio_path, thumb_path, title):
     audio = AudioFileClip(audio_path)
-    duration = audio.duration
-    bg = ImageClip(thumbnail_path).set_duration(duration).resize((1280, 720))
+    bg = ImageClip(thumb_path).set_duration(audio.duration).resize((1280, 720))
     video = bg.set_audio(audio)
-    out_path = os.path.join(OUTPUT_DIR, f"{title[:50].replace(' ','_')}.mp4")
-    video.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac")
-    return out_path
+    out = os.path.join(OUTPUT_DIR, f"{title[:50].replace(' ','_')}.mp4")
+    video.write_videofile(out, fps=24, codec="libx264", audio_codec="aac")
+    return out
 
 # === MAIN ===
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=str, default="rainy night story")
+    parser.add_argument("--seed", type=str, default="rainy night")
     args = parser.parse_args()
 
     story = generate_story(args.seed)
     title = args.seed.title()
-    audio_path = os.path.join(OUTPUT_DIR, "voice.wav")
-    story_to_audio(story, audio_path)
+
+    audio = os.path.join(OUTPUT_DIR, "voice.wav")
+    story_to_audio(story, audio)
 
     thumb = generate_thumbnail(title)
-    meta = auto_seo(title)
-    video = render_video(audio_path, thumb, title)
+    seo_data = auto_seo(title)
+    video = render_video(audio, thumb, title)
 
     with open(os.path.join(OUTPUT_DIR, "meta.json"), "w") as f:
-        json.dump({"title": title, "seo": meta, "video": video}, f, indent=2)
+        json.dump({"title": title, "seo": seo_data, "video": video}, f, indent=2)
     print("✅ Done:", title)
