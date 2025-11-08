@@ -132,17 +132,35 @@ def render_video(seed):
     story_audio = os.path.join(OUTPUT_DIR, "voice.wav")
     synthesize_audio(story, story_audio)
 
-    rain_clip = AudioFileClip(RAIN_SOUND).volumex(0.4)
-    voice_clip = AudioFileClip(story_audio).volumex(0.6)
-    final_audio = CompositeVideoClip([]).set_audio(voice_clip.set_duration(DURATION_SECONDS)).audio.set_duration(DURATION_SECONDS)
+    try:
+        # Load ảnh thumbnail và tiếng mưa
+        img_clip = ImageClip(thumb_path).set_duration(DURATION_SECONDS)
+        voice_clip = AudioFileClip(story_audio).volumex(0.6)
+        rain_clip = AudioFileClip(RAIN_SOUND).volumex(0.3)
 
-    img_clip = ImageClip(thumb_path).set_duration(DURATION_SECONDS)
-    img_clip = img_clip.set_audio(voice_clip)
-    output_path = os.path.join(OUTPUT_DIR, f"{seed.replace(' ', '_')}.mp4")
+        # Hòa trộn âm thanh
+        final_audio = voice_clip.set_duration(DURATION_SECONDS).audio_fadeout(2)
+        mixed_audio = final_audio.set_duration(DURATION_SECONDS).fx(lambda a: a).volumex(1.0)
+        img_clip = img_clip.set_audio(mixed_audio)
 
-    img_clip.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
-    print(f"✅ Rendered: {output_path}")
-    return output_path
+        # Xuất video MP4
+        output_path = os.path.join(OUTPUT_DIR, f"{seed.replace(' ', '_')}.mp4")
+        print(f"💾 Saving video to {output_path} ...")
+        img_clip.write_videofile(
+            output_path,
+            fps=30,
+            codec="libx264",
+            audio_codec="aac",
+            bitrate="2000k",
+            threads=2
+        )
+
+        print(f"✅ Rendered: {output_path}")
+        return output_path
+    except Exception as e:
+        print("❌ Render failed:", e)
+        return None
+
 
 
 # === MAIN ===
@@ -159,4 +177,5 @@ if __name__ == "__main__":
         print("❌ Render failed:", e)
 
     print("🎉 Done.")
+
 
