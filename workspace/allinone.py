@@ -1,373 +1,323 @@
-#!/usr/bin/env python3
-# coding: utf-8
+# workspace/allinone.py
 """
-Full-auto chill story tool:
-- Generate story with GPT (or Gemini fallback)
-- Generate SEO (title/description/tags + thumbnail prompt)
-- TTS (gTTS by default; optional Coqui if USE_COQUI=1)
-- Mix rain ambience, normalize
-- Render video (static/AI background + subtle Ken Burns)
-- Upload to YouTube (OAuth refresh_token)
+All-in-one tool:
+1) generate story text using GPT-4o
+2) create SEO metadata (title, description, tags) in English using GPT-4o
+3) synthesize voice via Coqui TTS
+4) mix ambient rain track
+5) render video (moviepy)
+6) create thumbnail (calls workspace/make_thumbnail.py)
+7) optionally upload to YouTube if YT_UPLOAD=true and secrets provided
 """
-
-import os, json, time, random, re, tempfile, subprocess, pathlib
-from datetime import datetime, timezone
-from typing import List, Tuple
+import os
+import json
+import time
+import uuid
+import subprocess
+from pathlib import Path
+from datetime import datetime
+import openai
+from TTS.api import TTS
+from pydub import AudioSegment
+from moviepy.editor import (
+    ImageClip,
+    AudioFileClip,
+    concatenate_audioclips,
+    CompositeVideoClip,
+)
+from make_thumbnail import create_thumbnail
+from PIL import Image
 import requests
-from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import AudioFileClip, ImageClip, CompositeAudioClip, afx
 
-# ====== CONFIG ======
-OUT_DIR = pathlib.Path("output")
-ASSETS_DIR = pathlib.Path("workspace/assets")
-RAIN_FILE = ASSETS_DIR / "rain.wav"       # đặt 1 file mưa 5–10 phút (loop)
-BG_IMAGE = ASSETS_DIR / "bg.jpg"          # ảnh nền fallback nếu không dùng AI thumbnail
-FONT_PATH = None                          # để None thì PIL sẽ dùng default
+# --- Configuration / env ---
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_KEY:
+    print("Warning: OPENAI_API_KEY not set. GPT features will fail.")
+openai.api_key = OPENAI_KEY
 
-# video length: theo audio
-VIDEOS_PER_RUN = int(os.getenv("VIDEOS_PER_RUN", "1"))
-LANG = os.getenv("LANG", "vi")            # ngôn ngữ TTS (gTTS)
-VOICE = os.getenv("COQUI_VOICE", "en_vctk")  # voice cho Coqui (nếu dùng)
+# Coqui TTS model name (english natural)
+COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits")
 
-USE_COQUI = os.getenv("USE_COQUI", "0") == "1"
+# Path structure
+ROOT = Path.cwd()
+WORKSPACE = ROOT / "workspace"
+OUTPUT_DIR = WORKSPACE / "output"
+LOGS_DIR = WORKSPACE / "logs"
+ASSETS_DIR = WORKSPACE / "assets"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ====== HELPERS ======
-def ensure_dirs():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (ASSETS_DIR).mkdir(parents=True, exist_ok=True)
+# rain audio sample path (you should include a small rain loop in workspace/assets/rain_loop.wav)
+RAIN_PATH = os.environ.get("RAIN_PATH", str(ASSETS_DIR / "rain_loop.wav"))
 
-def ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+# YouTube upload control
+YT_UPLOAD = os.environ.get("YT_UPLOAD", "false").lower() in ("1", "true", "yes")
+YT_CLIENT_ID = os.environ.get("YT_CLIENT_ID")
+YT_CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
+YT_REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
+YT_PRIVACY = os.environ.get("YT_PRIVACY", "public")
 
-def run(cmd: List[str], check=True):
-    print(">>", " ".join(cmd))
-    return subprocess.run(cmd, check=check)
+# Video params
+VIDEO_RES = (1280, 720)  # 720p
+FPS = 24
 
-def save_text(path: pathlib.Path, content: str):
-    path.write_text(content, encoding="utf-8")
+# duration target in seconds (e.g., 3600s = 1 hour). For faster tests, use lower.
+TARGET_DURATION = int(os.environ.get("TARGET_DURATION", 600))  # default 10 minutes for CI; set 3600 locally if you want 1 hour
 
-def read_text(path: pathlib.Path) -> str:
-    return path.read_text(encoding="utf-8")
+# voice style
+VOICE_STYLE = os.environ.get("VOICE_STYLE", "male_warm")  # for prompting GPT or selecting model
 
-# ====== 1) STORY GENERATION ======
-def generate_story_with_openai(prompt_seed: str) -> str:
-    api = os.getenv("OPENAI_API_KEY")
-    if not api:
+# Helper logging
+def log(msg):
+    ts = datetime.now().isoformat(timespec="seconds")
+    print(f"[{ts}] {msg}")
+
+# --- GPT helper: generate story and SEO ---
+def gpt_generate_story_and_metadata(prompt_seed: str = None, language="English"):
+    """
+    Use GPT-4o to generate:
+    - story text (target duration estimate)
+    - SEO: title, short description (first 2 lines), long description, tags (10)
+    We return dict with story_text and metadata
+    """
+    if not OPENAI_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
-    # lightweight prompt
-    system = "You are a writer who crafts calm, cozy, rain-night bedtime stories in Vietnamese. Keep it PG, soothing, 1800-2300 words."
-    user = f"Viết một truyện chill đêm mưa giọng kể gần gũi, nhiều âm thanh gợi tả (nhưng không rườm rà), chủ đề: {prompt_seed}. Chia đoạn ngắn dễ nghe."
-    import openai
-    openai.api_key = api
-    # Use Responses API for latest SDKs if available; fallback to ChatCompletion
-    try:
-        resp = openai.ChatCompletion.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[{"role":"system","content":system},{"role":"user","content":user}],
-            temperature=0.7,
-        )
-        return resp.choices[0].message["content"].strip()
-    except Exception as e:
-        # fallback: Responses API style (if using new SDK)
-        from openai import OpenAI
-        client = OpenAI(api_key=api)
-        r = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[{"role":"system","content":system},{"role":"user","content":user}],
-            temperature=0.7,
-        )
-        return r.choices[0].message.content.strip()
-
-def generate_story_with_gemini(prompt_seed: str) -> str:
-    key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise RuntimeError("No Gemini key")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={key}"
-    payload = {"contents":[{"parts":[{"text": f"Viết truyện chill đêm mưa 1800-2300 từ, giọng kể nhẹ nhàng. Chủ đề: {prompt_seed}"}]}]}
-    r = requests.post(url, json=payload, timeout=90)
-    r.raise_for_status()
-    data = r.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-def generate_story(seed_topics: List[str]) -> str:
-    seed = random.choice(seed_topics)
-    try:
-        return generate_story_with_openai(seed)
-    except Exception as e:
-        print("OpenAI story failed:", e)
-        try:
-            return generate_story_with_gemini(seed)
-        except Exception as e2:
-            print("Gemini fallback failed:", e2)
-            # last-resort: simple template
-            return ("Đêm mưa rơi tí tách... " * 400)[:4000]
-
-# ====== 2) SEO (title/desc/tags + thumbnail prompt) ======
-def generate_seo(text: str):
-    api = os.getenv("OPENAI_API_KEY")
-    if not api:
-        # simple fallback
-        title = "Truyện Chill Đêm Mưa | Ngủ ngon an yên"
-        desc = "Một câu chuyện nhẹ nhàng đưa bạn vào giấc ngủ giữa tiếng mưa rơi. Chúc bạn ngủ thật ngon!"
-        tags = ["chill", "ngủ ngon", "tiếng mưa", "bedtime story", "relax"]
-        thumb_prompt = "cozy room at night, gentle rain on window, warm lamp, cinematic"
-        return title, desc, tags, thumb_prompt
-
-    import openai
-    openai.api_key = api
-    prompt = (
-        "Từ truyện sau, tạo:\n"
-        "1) Một tiêu đề YouTube ngắn <= 72 ký tự, có keyword 'đêm mưa', 'chill', tự nhiên, không spam.\n"
-        "2) Mô tả 2–3 đoạn (khoảng 250–400 chữ), kêu gọi subscribe nhẹ, có hashtag hợp lý.\n"
-        "3) Danh sách 10–15 tag dạng CSV.\n"
-        "4) Một prompt ngắn để vẽ thumbnail (tiếng Anh), phong cách ảnh thật 4K, cinematic rain-night.\n\n"
-        f"Nội dung:\n{text[:4000]}"
+    system = {
+        "role": "system",
+        "content": (
+            "You are a professional storyteller and YouTube SEO copywriter. "
+            "Produce a calm, chill bedtime story suitable for a relaxing 'rain ambience' video. "
+            "Output JSON only with fields: story, estimated_minutes, title, short_description, long_description, tags[]."
+        ),
+    }
+    user_template = (
+        "Create a relaxing English short story suitable for audio-only listening while rain plays in the background.\n"
+        "Target total audio duration: approximately {minutes} minutes.\n"
+        "Keep language simple, soothing, present tense. No explicit gore or graphic content.\n"
+        "Also create a SEO-optimized English title (<=65 chars), a short 1-2 sentence description, "
+        "a longer description (3-5 paragraphs) including keywords 'rain', 'relax', 'sleep', 'calm', and 10 short tags.\n"
+        "Return JSON only.\n\nSeed: {seed}\n"
     )
+    target_min = max(5, TARGET_DURATION // 60)
+    if not prompt_seed:
+        prompt_seed = "A small lakeside town where the main character remembers childhood summer rains."
+    user = {"role": "user", "content": user_template.format(minutes=target_min, seed=prompt_seed)}
+    # call chat completion
+    log("Calling GPT-4o to generate story and metadata...")
+    resp = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[system, user],
+        temperature=0.8,
+        max_tokens=1400,
+    )
+    text = resp["choices"][0]["message"]["content"].strip()
+    # Try to parse JSON from response; GPT instructed to produce JSON only
     try:
-        resp = openai.ChatCompletion.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[{"role":"user","content":prompt}],
-            temperature=0.6
-        )
-        raw = resp.choices[0].message["content"]
+        data = json.loads(text)
     except Exception:
-        from openai import OpenAI
-        client = OpenAI(api_key=api)
-        r = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[{"role":"user","content":prompt}],
-            temperature=0.6
-        )
-        raw = r.choices[0].message.content
-
-    # very small parser
-    title = re.search(r"(?i)tiêu đề[:\-]\s*(.*)", raw)
-    title = (title.group(1) if title else raw.splitlines()[0]).strip()[:72]
-    tags_match = re.search(r"(?i)tag[s]?:\s*(.*)", raw)
-    tags = [t.strip() for t in (tags_match.group(1) if tags_match else "chill,ngủ ngon,tiếng mưa").split(",") if t.strip()]
-    thumb_prompt = re.search(r"(?i)thumbnail.*?:\s*(.*)", raw)
-    thumb_prompt = (thumb_prompt.group(1) if thumb_prompt else "cozy room at night, rain on window, warm lamp, cinematic, 4k").strip()
-
-    # description: take remainder
-    desc = raw
-    return title, desc, tags, thumb_prompt
-
-# ====== 3) TTS ======
-def tts_gtts(text: str, out_path: pathlib.Path, lang="vi"):
-    from gtts import gTTS
-    gTTS(text=text, lang=lang).save(str(out_path))
-
-def tts_coqui(text: str, out_path: pathlib.Path, voice: str):
-    # Coqui TTS CLI if available
-    # model default tts_models/en/vctk/vits or vi model if preinstalled
-    cmd = [
-        "python", "-m", "TTS.bin.synthesize",
-        "--text", text,
-        "--model_name", os.getenv("COQUI_MODEL", "tts_models/en/vctk/vits"),
-        "--out_path", str(out_path)
-    ]
-    run(cmd)
-
-def make_tts(text: str, out_wav: pathlib.Path):
-    if USE_COQUI:
-        tts_coqui(text, out_wav, VOICE)
-    else:
-        # gTTS outputs mp3; convert to wav with ffmpeg
-        tmp_mp3 = out_wav.with_suffix(".mp3")
-        tts_gtts(text, tmp_mp3, LANG)
-        run(["ffmpeg","-y","-i",str(tmp_mp3),"-ar","44100","-ac","2",str(out_wav)])
-        tmp_mp3.unlink(missing_ok=True)
-
-# ====== 4) Mix rain, normalize ======
-def loop_rain_to_length(target_len_s: float, out_wav: pathlib.Path):
-    if RAIN_FILE.exists():
-        # ffmpeg loop
-        run([
-            "ffmpeg","-y","-stream_loop","-1","-t", str(target_len_s),
-            "-i", str(RAIN_FILE),
-            "-filter:a","volume=0.25",
-            str(out_wav)
-        ])
-    else:
-        # pink noise fallback (quiet)
-        import numpy as np, soundfile as sf
-        sr = 44100
-        n = int(target_len_s*sr)
-        noise = np.random.normal(0, 0.02, n).astype("float32")
-        sf.write(out_wav, noise, sr)
-
-def mix_voice_and_rain(voice_wav: pathlib.Path, rain_wav: pathlib.Path, out_wav: pathlib.Path):
-    # duck the rain a bit when voice present
-    run([
-        "ffmpeg","-y",
-        "-i", str(voice_wav),
-        "-i", str(rain_wav),
-        "-filter_complex",
-        "[1:a]volume=0.25[a1];[0:a]dynaudnorm=f=75:g=15[mv];[mv][a1]amix=inputs=2:weight=1 1:duration=first,volume=1.0[out]",
-        "-map","[out]","-ar","44100","-ac","2", str(out_wav)
-    ])
-
-# ====== 5) Thumbnail / Background ======
-def generate_thumb_via_openai(prompt: str, out_path: pathlib.Path) -> bool:
-    api = os.getenv("OPENAI_API_KEY")
-    if not api:
-        return False
-    try:
-        # Images API
-        from openai import OpenAI
-        client = OpenAI(api_key=api)
-        r = client.images.generate(
-            model=os.getenv("OPENAI_IMAGE_MODEL","gpt-image-1"),
-            prompt=prompt,
-            size="1024x1024",
-            n=1
-        )
-        import base64
-        b64 = r.data[0].b64_json
-        img_bytes = base64.b64decode(b64)
-        out_path.write_bytes(img_bytes)
-        return True
-    except Exception as e:
-        print("OpenAI image failed:", e)
-        return False
-
-def make_fallback_thumb(text_title: str, out_path: pathlib.Path):
-    img = Image.new("RGB", (1280, 720), (20, 24, 28))
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype(FONT_PATH, 72) if FONT_PATH and pathlib.Path(FONT_PATH).exists() else ImageFont.load_default()
-    # wrap title
-    words = text_title.split()
-    lines, line = [], ""
-    for w in words:
-        if len(line + " " + w) < 26:
-            line = (line + " " + w).strip()
+        # fallback: attempt to extract JSON block
+        import re
+        m = re.search(r"(\{[\s\S]*\})", text)
+        if m:
+            data = json.loads(m.group(1))
         else:
-            lines.append(line); line = w
-    if line: lines.append(line)
-    y = 200
-    for ln in lines[:4]:
-        draw.text((80,y), ln, fill=(235, 235, 235), font=font)
-        y += 90
-    img.save(out_path)
+            raise RuntimeError("GPT response could not be parsed as JSON:\n" + text)
+    # Basic validation
+    required = ["story", "title", "short_description", "long_description", "tags"]
+    for k in required:
+        if k not in data:
+            raise RuntimeError(f"GPT output missing required key: {k}. Full:\n{data}")
+    return data
 
-# ====== 6) Render video ======
-def render_video(bg_image: pathlib.Path, audio_wav: pathlib.Path, out_mp4: pathlib.Path):
-    audio = AudioFileClip(str(audio_wav))
-    img = ImageClip(str(bg_image)).set_duration(audio.duration)
-    # subtle ken burns: zoom 1.0 -> 1.05
-    w, h = img.size
-    def zoom(get_frame, t):
-        f = get_frame(t)
-        z = 1.0 + 0.05*(t/audio.duration)
-        return ImageClip(f).resize(z).get_frame(0)
-    # moviepy's resize per-frame is heavy; simpler: static image
-    video = img.set_audio(audio)
-    # write
-    video = video.fx(afx.audio_normalize)
-    video.write_videofile(str(out_mp4), fps=30, codec="libx264", audio_codec="aac", threads=2, preset="veryfast", verbose=False, logger=None)
-    audio.close(); video.close()
+# --- TTS: Coqui ---
+def synthesize_tts_coqui(text: str, out_wav: str, model_name=COQUI_MODEL):
+    """
+    Use TTS library to synthesize text to wav file.
+    """
+    log("Loading TTS model: " + model_name)
+    tts = TTS(model_name)  # uses local model cache; ensure model is available/installed
+    log("Synthesizing TTS to " + out_wav)
+    # TTS.tts_to_file(text=..., file_path=...)
+    tts.tts_to_file(text=text, file_path=out_wav)
+    return out_wav
 
-# ====== 7) Upload YouTube ======
-def youtube_upload(path_mp4: pathlib.Path, title: str, description: str, tags: List[str]):
-    # Using refresh_token flow
-    client_id = os.getenv("YT_CLIENT_ID")
-    client_secret = os.getenv("YT_CLIENT_SECRET")
-    refresh_token = os.getenv("YT_REFRESH_TOKEN")
-    if not (client_id and client_secret and refresh_token):
-        print("⚠️ Missing YouTube secrets; skip upload. (YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN)")
-        return False
+# --- Audio mixing (rain + speech) ---
+def mix_rain_and_speech(speech_wav: str, rain_wav: str, out_path: str, target_duration=TARGET_DURATION):
+    """
+    Create final mixed audio with speech centered and rain looped to target_duration.
+    """
+    log("Loading speech audio and rain track.")
+    speech = AudioSegment.from_file(speech_wav)
+    # ensure speech is mono/16kHz? pydub handles formats but ensure consistent.
+    # Load or create rain loop
+    if not os.path.exists(rain_wav):
+        log("No rain track found; creating silence fill.")
+        rain = AudioSegment.silent(duration=target_duration*1000)
+    else:
+        rain = AudioSegment.from_file(rain_wav)
+    # Loop rain until target duration
+    rain_loop = AudioSegment.empty()
+    while len(rain_loop) < target_duration * 1000:
+        rain_loop += rain
+    rain_loop = rain_loop[:target_duration * 1000]
+    # Mix: lower rain volume so speech dominates
+    rain_loop = rain_loop - 12  # reduce by 12 dB
+    # Place speech at start
+    final = rain_loop.overlay(speech, position=0)
+    final.export(out_path, format="wav")
+    log(f"Exported mixed audio to {out_path}")
+    return out_path
 
+# --- Video rendering (image + audio) ---
+def render_video_from_audio(audio_path: str, image_path: str, out_video: str, duration=TARGET_DURATION, fps=FPS, resolution=VIDEO_RES):
+    """
+    Render a simple video: static image stretched to duration + audio.
+    For long videos, better to loop small subtle motion (we implement gentle zoom).
+    """
+    log("Rendering video...")
+    # Use ImageClip with duration and slight zoom via lambda (moviepy)
+    clip = ImageClip(image_path).set_duration(duration)
+    # apply small zoom effect
+    def zoom(t):
+        # zoom from 1.0 to 1.03 over duration
+        return 1 + 0.03 * (t / max(1, duration))
+    clip = clip.resize(lambda t: (resolution[0] * zoom(t) / clip.w, resolution[1] * zoom(t) / clip.h))
+    # ensure final size
+    clip = clip.set_fps(fps).resize(newsize=resolution)
+    audio = AudioFileClip(audio_path)
+    clip = clip.set_audio(audio).set_duration(audio.duration)
+    clip.write_videofile(out_video, codec="libx264", audio_codec="aac", fps=fps, threads=2, preset="medium", verbose=False, logger=None)
+    log(f"Saved video to {out_video}")
+    return out_video
+
+# --- YouTube upload (optional) ---
+def upload_to_youtube(video_file, title, description, tags, thumbnail_path, privacy="public"):
+    """
+    Upload video via YouTube Data API v3 (requires OAuth2 refresh token).
+    Expects env vars: YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN
+    """
+    if not (YT_CLIENT_ID and YT_CLIENT_SECRET and YT_REFRESH_TOKEN):
+        raise RuntimeError("YouTube credentials not provided in env (YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN).")
+    log("Preparing YouTube upload...")
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
     creds = Credentials(
-        None,
-        refresh_token=refresh_token,
+        token=None,
+        refresh_token=YT_REFRESH_TOKEN,
+        client_id=YT_CLIENT_ID,
+        client_secret=YT_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=["https://www.googleapis.com/auth/youtube.upload"]
+        scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
     )
-    service = build("youtube","v3", credentials=creds)
+    # refresh to get access token
+    creds.refresh(requests.Request())
+    youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+
     body = {
         "snippet": {
-            "title": title[:100],
-            "description": description[:5000],
-            "tags": tags[:15],
-            "categoryId": "22"  # People & Blogs
+            "title": title,
+            "description": description,
+            "tags": tags[:50],
+            "categoryId": "22"  # People & Blogs / maybe change
         },
         "status": {
-            "privacyStatus": os.getenv("YT_PRIVACY","public"),  # public|private|unlisted
-            "selfDeclaredMadeForKids": False
-        }
+            "privacyStatus": privacy
+        },
     }
-    media = MediaFileUpload(str(path_mp4), chunksize=-1, resumable=True, mimetype="video/*")
-    req = service.videos().insert(part="snippet,status", body=body, media_body=media)
-    resp = None
-    while resp is None:
-        status, resp = req.next_chunk()
-    print("✅ Uploaded:", resp.get("id"))
-    return True
+    media = MediaFileUpload(video_file, chunksize=-1, resumable=True, mimetype="video/*")
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = None
+    log("Uploading video (this may take time)...")
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            log(f"Upload progress: {int(status.progress() * 100)}%")
+    video_id = response.get("id")
+    log(f"Video uploaded with id: {video_id}")
+    # set thumbnail
+    if thumbnail_path and os.path.exists(thumbnail_path):
+        t_req = youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(thumbnail_path))
+        t_resp = t_req.execute()
+        log("Thumbnail set.")
+    return video_id
 
-# ====== MAIN ======
-def main():
-    ensure_dirs()
-    # Topics to vary stories
-    topics = [
-        "ký ức tuổi thơ ở làng quê", "tiệm sách nhỏ trong đêm", "hành trình tìm lại chính mình",
-        "chuyến xe đêm về miền biển", "căn phòng trọ và cây đèn vàng", "mùi cà phê nóng và tiếng mưa",
-    ]
+# --- Main orchestration ---
+def run_pipeline(seed_prompt=None, voice_model=COQUI_MODEL):
+    run_id = uuid.uuid4().hex[:8]
+    log(f"Run id: {run_id}")
+    # 1. Generate story + SEO via GPT
+    meta = gpt_generate_story_and_metadata(prompt_seed=seed_prompt)
+    story_text = meta["story"]
+    title = meta["title"][:65]
+    short_desc = meta["short_description"]
+    long_desc = meta["long_description"]
+    tags = meta.get("tags", [])[:50]
+    # Save metadata
+    meta_path = OUTPUT_DIR / f"meta_{run_id}.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    log("Saved metadata to " + str(meta_path))
 
-    for i in range(VIDEOS_PER_RUN):
-        uid = ts()
-        work = OUT_DIR / f"job_{uid}"
-        work.mkdir(parents=True, exist_ok=True)
+    # 2. Synthesize speech via Coqui
+    speech_wav = OUTPUT_DIR / f"speech_{run_id}.wav"
+    synthesize_tts_coqui(story_text, str(speech_wav), model_name=voice_model)
 
-        print("===> Generating story...")
-        story = generate_story(topics)
-        save_text(work / "story.txt", story)
+    # 3. Mix rain + speech
+    mixed_wav = OUTPUT_DIR / f"final_audio_{run_id}.wav"
+    mix_rain_and_speech(str(speech_wav), RAIN_PATH, str(mixed_wav), target_duration=TARGET_DURATION)
 
-        print("===> Generating SEO & thumbnail prompt...")
-        title, description, tags, thumb_prompt = generate_seo(story)
-        save_text(work / "title.txt", title)
-        save_text(work / "description.txt", description)
-        save_text(work / "tags.txt", ",".join(tags))
-        save_text(work / "thumb_prompt.txt", thumb_prompt)
+    # 4. Render video - we need a base image: either a generated one, or fallback
+    # Option: user can place base image at workspace/assets/background.jpg
+    bg = ASSETS_DIR / "background.jpg"
+    if not bg.exists():
+        # create a simple gradient/warm background as fallback
+        log("No background.jpg found in assets. Creating simple fallback image.")
+        im = Image.new("RGB", VIDEO_RES, color=(25, 20, 30))
+        im.save(str(bg))
+    # Compose final image (we can also overlay subtle noise)
+    out_video = OUTPUT_DIR / f"video_{run_id}.mp4"
+    render_video_from_audio(str(mixed_wav), str(bg), str(out_video), duration=TARGET_DURATION)
 
-        print("===> TTS...")
-        voice_wav = work / "voice.wav"
-        make_tts(story, voice_wav)
+    # 5. Thumbnail: generate from frame -> style -> save
+    thumb_path = OUTPUT_DIR / f"thumbnail_{run_id}.jpg"
+    tpath = create_thumbnail(str(out_video), title, thumb_path)
 
-        print("===> Make rain & mix...")
-        # determine length
-        import wave
-        with wave.open(str(voice_wav), "rb") as w:
-            frames = w.getnframes(); rate = w.getframerate()
-            dur = frames / float(rate)
-        rain_wav = work / "rain.wav"
-        loop_rain_to_length(dur, rain_wav)
-        mixed_wav = work / "audio_mix.wav"
-        mix_voice_and_rain(voice_wav, rain_wav, mixed_wav)
+    # 6. Save final metadata + log
+    result = {
+        "run_id": run_id,
+        "title": title,
+        "short_description": short_desc,
+        "long_description": long_desc,
+        "tags": tags,
+        "video": str(out_video),
+        "thumbnail": str(tpath),
+        "audio": str(mixed_wav),
+    }
+    result_path = OUTPUT_DIR / f"result_{run_id}.json"
+    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    log("Pipeline finished. Outputs saved to " + str(OUTPUT_DIR))
 
-        print("===> Thumbnail / Background...")
-        thumb = work / "thumb.jpg"
-        ok = generate_thumb_via_openai(thumb_prompt, thumb)
-        if not ok:
-            # fallback: use bg + big title
-            make_fallback_thumb(title, thumb)
+    # 7. Optionally upload to YouTube
+    if YT_UPLOAD:
+        try:
+            vid = upload_to_youtube(str(out_video), title, long_desc, tags, str(tpath), privacy=YT_PRIVACY)
+            log("Uploaded video id: " + vid)
+        except Exception as e:
+            log("YouTube upload failed: " + str(e))
 
-        print("===> Render video...")
-        out_mp4 = work / f"{uid}.mp4"
-        bg_img = thumb if thumb.exists() else (BG_IMAGE if BG_IMAGE.exists() else thumb)
-        render_video(bg_img, mixed_wav, out_mp4)
-
-        print("===> Upload YouTube...")
-        uploaded = youtube_upload(out_mp4, title, description, tags)
-        if uploaded:
-            print("✅ DONE:", out_mp4)
-        else:
-            print("⚠️ Skipped upload; file saved at:", out_mp4)
+    return result
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=str, default=None, help="Seed prompt for story generation")
+    parser.add_argument("--duration", type=int, default=None, help="target duration seconds")
+    parser.add_argument("--voice", type=str, default=None, help="Coqui model name to use")
+    args = parser.parse_args()
+    if args.duration:
+        TARGET_DURATION = args.duration
+    if args.voice:
+        COQUI_MODEL = args.voice
+    run_pipeline(seed_prompt=args.seed, voice_model=COQUI_MODEL)
