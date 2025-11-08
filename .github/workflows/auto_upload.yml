@@ -3,7 +3,8 @@ name: Auto Upload 3 Chill Videos Daily
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 1,9,16 * * *"  # 3 lần/ngày: 01,09,16 UTC
+    # 3 lần/ngày: 01h, 09h, 16h UTC (tức 8h, 16h, 23h VN)
+    - cron: "0 1,9,16 * * *"
 
 jobs:
   build-and-run:
@@ -16,16 +17,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Debug — show repo root & files
+      - name: Debug — check repo files
         run: |
           echo "PWD: $(pwd)"
-          echo "---- root files ----"
+          echo "---- Files in root ----"
           ls -la
-          echo "---- recursive ls (top 2) ----"
-          ls -la | sed -n '1,200p'
-          echo "---- git tracked files ----"
-          git rev-parse --show-toplevel || true
-          git status --porcelain || true
+          echo "---- All tracked files ----"
           git ls-files | sed -n '1,200p'
 
       - name: Clear old Python caches
@@ -43,25 +40,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Check requirements file content (if exists) and install deps
-        id: install_reqs
+      - name: Install Python requirements (from requirements_final.txt)
         run: |
-          echo "Looking for requirements.txt in repo root..."
-          if [ -f "./requirements.txt" ]; then
-            echo "FOUND requirements.txt — printing head (first 200 lines):"
-            sed -n '1,200p' requirements.txt || true
-            echo "Installing from requirements.txt ..."
+          if [ -f "./requirements_final.txt" ]; then
+            echo "✅ Found requirements_final.txt — installing now..."
             python -m pip install --upgrade pip
-            # safe install with legacy resolver to help older dependency pinning if needed
-            python -m pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements.txt
+            pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements_final.txt
           else
-            echo "requirements.txt NOT FOUND — falling back to explicit pip install (safe list)"
+            echo "⚠️ File requirements_final.txt not found — using fallback list."
             python -m pip install --upgrade pip
-            python -m pip install --no-cache-dir \
-              openai requests pydub ffmpeg-python Pillow \
-              coqui-tts numpy==1.24.4 numba==0.57.0 soundfile || true
-            # Log installed pip list
-            python -m pip freeze | sed -n '1,200p'
+            pip install --no-cache-dir openai requests pydub ffmpeg-python Pillow coqui-tts numpy==1.24.4 numba==0.57.0 soundfile
           fi
 
       - name: Generate & Render 3 Chill Videos
@@ -74,14 +62,19 @@ jobs:
           TARGET_DURATION: "600"
         run: |
           echo "=== 🚀 Bắt đầu tạo 3 video chill ==="
-          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds" || echo "video1 failed"
-          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "video2 failed"
-          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "video3 failed"
-          echo "=== ✅ Hoàn tất renders (hoặc bỏ qua lỗi render) ==="
+          mkdir -p workspace/output
+          python workspace/allinone.py --seed "A cozy night by the lake with rain sounds" || echo "❌ Lỗi video 1"
+          python workspace/allinone.py --seed "A calm story in a mountain cabin during a storm" || echo "❌ Lỗi video 2"
+          python workspace/allinone.py --seed "Relaxing rainy afternoon in a city cafe" || echo "❌ Lỗi video 3"
+          echo "=== ✅ Hoàn tất render ==="
+          ls -R workspace/output || echo "⚠️ Không tìm thấy output"
 
-      - name: Upload output artifacts
+      - name: Upload artifacts (video & logs)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: chill-video-output
-          path: workspace/output/**
-
+          path: |
+            workspace/output/**
+            workspace/*.log
+          retention-days: 3
