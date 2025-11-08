@@ -15,9 +15,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Clear Python & pip cache
+      - name: Force clear Python cache
         run: |
           sudo rm -rf /opt/hostedtoolcache/Python || true
+          rm -rf ~/.cache/pip || true
           python3 -m pip cache purge || true
 
       - name: Set up Python 3.10
