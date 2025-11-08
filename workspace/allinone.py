@@ -11,6 +11,17 @@ from PIL import Image, ImageDraw, ImageFont
 OUTPUT_DIR = "workspace/output"
 ASSETS_DIR = "workspace/assets"
 RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
+
+# Nếu file mưa chưa có, tự tải về từ link an toàn
+if not os.path.exists(RAIN_SOUND) or os.path.getsize(RAIN_SOUND) < 1000:
+    print("🌧️ Rain sound not found, downloading fallback...")
+    os.makedirs(ASSETS_DIR, exist_ok=True)
+    try:
+        os.system("curl -L -o workspace/assets/rain.mp3 https://huggingface.co/datasets/hauntedai/audio-sfx/resolve/main/rain_soft.mp3?download=true")
+        print("✅ Rain sound downloaded successfully.")
+    except Exception as e:
+        print("⚠️ Failed to download rain.mp3:", e)
+
 FONT_PATH = os.path.join(ASSETS_DIR, "font.ttf")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -148,3 +159,4 @@ if __name__ == "__main__":
         print("❌ Render failed:", e)
 
     print("🎉 Done.")
+
