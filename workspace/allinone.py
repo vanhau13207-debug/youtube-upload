@@ -35,13 +35,9 @@ def generate_story(seed):
 def synthesize_audio(text, out_path="workspace/output/voice.wav"):
     try:
         print("🎙️ Generating voice with Coqui TTS (offline)...")
-        tts = TTS(model_name="tts_models/en/vctk/vits", progress_bar=False, gpu=False)
-
-        # Chọn giọng mặc định (bắt buộc với multi-speaker model)
-        speaker = random.choice(["p315", "p270", "p233", "p340", "p362"])
-        print(f"🗣️ Using speaker voice: {speaker}")
-
-        tts.tts_to_file(text=text, file_path=out_path, speaker=speaker)
+        # Dùng single-speaker model thay vì multi-speaker để tránh lỗi
+        tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False, gpu=False)
+        tts.tts_to_file(text=text, file_path=out_path)
         return out_path
     except Exception as e:
         print("⚠️ Local TTS failed:", e)
@@ -87,3 +83,4 @@ if __name__ == "__main__":
         print("⚠️ Falling back to ambient rain sound...")
         voice = "workspace/assets/rain.mp3"
     render_video(voice, thumb)
+
