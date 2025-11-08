@@ -3,8 +3,7 @@ name: Auto Upload 3 Chill Videos Daily
 on:
   workflow_dispatch:
   schedule:
-    # 3 lần/ngày: 01h, 09h, 16h UTC (tức 8h, 16h, 23h VN)
-    - cron: "0 1,9,16 * * *"
+    - cron: "0 1,9,16 * * *"  # 3 lần/ngày: 8h, 16h, 23h giờ VN
 
 jobs:
   build-and-run:
@@ -22,7 +21,7 @@ jobs:
           echo "PWD: $(pwd)"
           echo "---- Files in root ----"
           ls -la
-          echo "---- All tracked files ----"
+          echo "---- Git tracked files ----"
           git ls-files | sed -n '1,200p'
 
       - name: Clear old Python caches
@@ -40,17 +39,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Install Python requirements (from requirements_final.txt)
+      - name: Install Python requirements (force include moviepy)
         run: |
+          python -m pip install --upgrade pip
           if [ -f "./requirements_final.txt" ]; then
             echo "✅ Found requirements_final.txt — installing now..."
-            python -m pip install --upgrade pip
             pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements_final.txt
           else
-            echo "⚠️ File requirements_final.txt not found — using fallback list."
-            python -m pip install --upgrade pip
-            pip install --no-cache-dir openai requests pydub ffmpeg-python Pillow coqui-tts numpy==1.24.4 numba==0.57.0 soundfile
+            echo "⚠️ File requirements_final.txt not found — fallback install."
           fi
+          echo "📦 Installing essential deps (moviepy etc)..."
+          pip install --no-cache-dir moviepy imageio imageio-ffmpeg Pillow numpy==1.24.4 numba==0.57.0 || true
+          echo "✅ Pip list after install:"
+          pip list | grep moviepy || true
 
       - name: Generate & Render 3 Chill Videos
         env:
