@@ -1,9 +1,9 @@
-name: Auto Render & Upload 3 Chill Videos Daily (Coqui Offline Free)
+name: Auto Render & Schedule Upload (3 Times/Day)
 
 on:
   workflow_dispatch:
   schedule:
-    # 3 lần/ngày: 6h, 14h, 21h (giờ VN) = 23h, 7h, 14h UTC
+    # 3 lần/ngày: 6h, 14h, 21h VN = 23h, 7h, 14h UTC
     - cron: "0 23,7,14 * * *"
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/Python || true
           python3 -m pip cache purge || true
 
-      - name: 🐍 Set up Python 3.10
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -37,24 +37,28 @@ jobs:
           sudo apt-get install -y ffmpeg libsndfile1
           python -m pip install --upgrade pip
           pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements_final.txt
-          pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2
+          pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2 google-api-python-client google-auth-oauthlib google-auth-httplib2
 
-      - name: 🎬 Generate & Render 3 Chill Videos (2h each)
+      - name: 🎬 Generate Chill Video (2h)
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TARGET_DURATION: "7200"
+          YT_UPLOAD: "false"
+        run: |
+          echo "=== 🚀 Rendering Chill Video with Coqui Offline ==="
+          python workspace/allinone.py --seed "A cozy rainy night by the lake"
+          echo "=== ✅ Render Complete ==="
+
+      - name: ⏰ Schedule YouTube Upload (đăng đúng giờ vàng)
+        env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          YT_UPLOAD: "true"
-          TARGET_DURATION: "7200"   # 2 tiếng mỗi video
         run: |
-          echo "=== 🚀 Start Rendering 3 Chill Videos with Coqui Offline ==="
-          python workspace/allinone.py --seed "A cozy rainy night by the lake"
-          python workspace/allinone.py --seed "A calm rainy evening in the city"
-          python workspace/allinone.py --seed "A peaceful stormy night in the cabin"
-          echo "=== ✅ Done Rendering All ==="
+          echo "=== 📅 Scheduling video upload for next VN slot ==="
+          python workspace/schedule_upload.py
 
-      - name: 📦 Upload rendered videos
+      - name: 📦 Upload output (backup)
         uses: actions/upload-artifact@v4
         with:
           name: chill-video-output
