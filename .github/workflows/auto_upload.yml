@@ -15,10 +15,6 @@ jobs:
       - name: 🧩 Checkout repo
         uses: actions/checkout@v4
 
-      - name: 🧹 Clean pip cache only
-        run: python3 -m pip cache purge || true
-
-
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,6 +25,9 @@ jobs:
         with:
           path: ~/.local/share/tts
           key: coqui-tts-model-vctk
+
+      - name: 🧹 Clean pip cache (nhẹ, không ảnh hưởng Coqui)
+        run: python3 -m pip cache purge || true
 
       - name: ⚙️ Install dependencies
         run: |
