@@ -1,61 +1,94 @@
-import os, datetime
-from googleapiclient.discovery import build
+#!/usr/bin/env python3
+import os
+import datetime
+import json
+import googleapiclient.discovery
+import google_auth_oauthlib.flow
+import google.auth.transport.requests
 from google.oauth2.credentials import Credentials
 
-def get_next_publish_time_vn():
-    """Trả về giờ đăng kế tiếp: 8h, 16h, 23h VN"""
-    now_utc = datetime.datetime.utcnow()
-    vn_time = now_utc + datetime.timedelta(hours=7)
-    today = vn_time.date()
-    schedule_hours = [8, 16, 23]
-    for h in schedule_hours:
-        publish_vn = datetime.datetime(today.year, today.month, today.day, h)
-        if vn_time < publish_vn:
-            return publish_vn - datetime.timedelta(hours=7)
-    next_day = today + datetime.timedelta(days=1)
-    return datetime.datetime(next_day.year, next_day.month, next_day.day, 8) - datetime.timedelta(hours=7)
+# === CONFIG ===
+OUTPUT_DIR = "workspace/output"
+VIDEO_PATH = os.path.join(OUTPUT_DIR, "final_video.mp4")
+THUMB_PATH = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
 
-def youtube_upload_with_schedule():
-    creds = Credentials.from_authorized_user_info({
-        "client_id": os.getenv("YT_CLIENT_ID"),
-        "client_secret": os.getenv("YT_CLIENT_SECRET"),
-        "refresh_token": os.getenv("YT_REFRESH_TOKEN")
-    })
+TITLE = "Rainy Chill Night 🌧️ Relaxing Story & Ambience"
+DESCRIPTION = """
+A calm and cozy 2-hour storytelling video with soft rain sounds and peaceful vibes.
+Perfect for sleep, study, or relaxation 🌙☕
+"""
+TAGS = ["chill", "rain sounds", "sleep", "study", "storytelling", "relax", "rainy night"]
 
-    youtube = build("youtube", "v3", credentials=creds)
-    video_path = "workspace/output/final_video.mp4"
-    if not os.path.exists(video_path):
-        print("❌ No video found to upload.")
-        return
+# === Get next upload time ===
+def next_vn_upload_time():
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+    slots = [8, 16, 23]
+    for h in slots:
+        if now.hour < h:
+            next_time = now.replace(hour=h, minute=0, second=0, microsecond=0)
+            break
+    else:
+        next_time = (now + datetime.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    return next_time - datetime.timedelta(hours=7)  # convert back to UTC
 
-    title = "Relaxing Rainy Story 🌧️ | Chill Ambience for Sleep or Focus"
-    description = "A calm, cinematic rainy story to relax, sleep, or focus. 🌙"
-    tags = ["rain", "chill", "sleep", "relax", "asmr", "ambience", "storytelling"]
+# === Auth ===
+def get_youtube_client():
+    creds_data = {
+        "installed": {
+            "client_id": os.getenv("YT_CLIENT_ID"),
+            "client_secret": os.getenv("YT_CLIENT_SECRET"),
+            "redirect_uris": ["http://localhost"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token"
+        }
+    }
 
-    publish_time = get_next_publish_time_vn()
-    publish_iso = publish_time.isoformat("T") + "Z"
-    vn_time_str = (publish_time + datetime.timedelta(hours=7)).strftime("%H:%M %d-%m-%Y")
-    print(f"🕒 Scheduling upload for {vn_time_str} (VN time)")
+    creds = Credentials(
+        None,
+        refresh_token=os.getenv("YT_REFRESH_TOKEN"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv("YT_CLIENT_ID"),
+        client_secret=os.getenv("YT_CLIENT_SECRET"),
+    )
+    return googleapiclient.discovery.build("youtube", "v3", credentials=creds)
+
+# === Upload & Schedule ===
+def schedule_upload():
+    youtube = get_youtube_client()
+    publish_time_utc = next_vn_upload_time().isoformat() + "Z"
+
+    print(f"📅 Scheduling upload for {publish_time_utc} (UTC)")
 
     request = youtube.videos().insert(
         part="snippet,status",
         body={
             "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags,
-                "categoryId": "24"
+                "title": TITLE,
+                "description": DESCRIPTION,
+                "tags": TAGS,
+                "categoryId": "22"
             },
             "status": {
                 "privacyStatus": "private",
-                "publishAt": publish_iso,
+                "publishAt": publish_time_utc,
                 "selfDeclaredMadeForKids": False
             }
         },
-        media_body=video_path
+        media_body=googleapiclient.http.MediaFileUpload(VIDEO_PATH, chunksize=-1, resumable=True)
     )
+
     response = request.execute()
-    print("✅ Scheduled video uploaded:", response.get("id"))
+    print("✅ Video uploaded, setting thumbnail...")
+
+    youtube.thumbnails().set(
+        videoId=response["id"],
+        media_body=THUMB_PATH
+    ).execute()
+
+    print(f"🎉 Scheduled video {response['id']} for {publish_time_utc}")
 
 if __name__ == "__main__":
-    youtube_upload_with_schedule()
+    if not os.path.exists(VIDEO_PATH):
+        print("❌ No video found at", VIDEO_PATH)
+    else:
+        schedule_upload()
