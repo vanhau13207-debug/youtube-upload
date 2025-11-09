@@ -5,8 +5,7 @@ on:
   schedule:
     # 6h, 14h, 21h VN = 23h, 07h, 14h UTC
     - cron: "0 23,7,14 * * *"
-permissions:
-  contents: write
+
 
 
 jobs:
@@ -49,13 +48,4 @@ jobs:
         run: |
           python workspace/schedule_upload.py
 
-      - name: 🤖 Auto Update Tool from ChillBot
-        run: |
-          git config --global user.email "chillbot@openai.com"
-          git config --global user.name "ChillBot-AI"
-          git pull
-          git add .
-          git commit -m "🤖 Auto updated tool by ChillBot" || echo "No changes"
-          git push https://$GH_BOT_TOKEN@github.com/${{ github.repository }} HEAD:main
-        env:
-          GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+     
