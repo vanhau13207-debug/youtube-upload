@@ -3,7 +3,7 @@ name: Auto Render & Schedule Upload (3 Times/Day)
 on:
   workflow_dispatch:
   schedule:
-    # 3 lần/ngày: 6h, 14h, 21h VN = 23h, 7h, 14h UTC
+    # 6h, 14h, 21h VN = 23h, 07h, 14h UTC
     - cron: "0 23,7,14 * * *"
 
 jobs:
@@ -20,48 +20,30 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: 📦 Cache Coqui TTS model
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/tts
-          key: coqui-tts-model-vctk
-
-      - name: 🧹 Clean pip cache (nhẹ, không ảnh hưởng Coqui)
-        run: python3 -m pip cache purge || true
-
-      - name: ⚙️ Install dependencies
+      - name: 📦 Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libsndfile1 espeak-ng
+          sudo apt-get install -y ffmpeg libsndfile1
           python -m pip install --upgrade pip
-          pip install --use-deprecated=legacy-resolver --no-cache-dir -r requirements_final.txt
-          pip install pillow==9.5.0 moviepy==1.0.3
-          pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2 google-api-python-client google-auth-oauthlib google-auth-httplib2
+          pip install --use-deprecated=legacy-resolver -r requirements_final.txt
+          pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2 google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy Pillow requests
 
-      - name: 🎬 Generate Chill Video (2h)
+      - name: 🎬 Generate 2H Chill Video
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TARGET_DURATION: "7200"
           YT_UPLOAD: "false"
         run: |
-          echo "=== 🚀 Rendering Chill Video with Coqui Offline ==="
-          python workspace/allinone.py --seed "A cozy rainy night by the lake"
-          echo "=== ✅ Render Complete ==="
+          python workspace/allinone.py
 
-      - name: ⏰ Schedule YouTube Upload (đăng đúng giờ vàng)
+      - name: ⏰ Schedule YouTube Upload
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
-          echo "=== 📅 Scheduling video upload for next VN slot ==="
           python workspace/schedule_upload.py
 
-      - name: 📦 Upload output (backup)
-        uses: actions/upload-artifact@v4
-        with:
-          name: chill-video-output
-          path: workspace/output/**
       - name: 🤖 Auto Update Tool from ChillBot
         run: |
           git config --global user.email "chillbot@openai.com"
@@ -72,4 +54,3 @@ jobs:
           git push https://$GH_BOT_TOKEN@github.com/${{ github.repository }} HEAD:main
         env:
           GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
-
