@@ -13,36 +13,34 @@ RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
 RAIN_VIDEO = os.path.join(ASSETS_DIR, "rain_bg.mp4")
 TARGET_DURATION = int(os.getenv("TARGET_DURATION", "7200"))
 
-# === STORY GENERATION ===
+# === STORY GENERATION (Gemini API miễn phí) ===
 def generate_story(seed):
-    prompt = f"Write a calm, cinematic bedtime story in English about {seed}. Tone: cozy, emotional, immersive."
-    print("🪶 Generating story via OpenAI API...")
+    print(f"🪶 Generating story using Gemini for seed: {seed}")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ Missing GEMINI_API_KEY. Please add it in GitHub Secrets.")
+        return "On a quiet rainy night, soft raindrops touched the window, and peace filled the air..."
+
+    prompt = f"""
+    Write a calm, emotional, and cinematic English bedtime story about {seed}.
+    Make it relaxing, detailed, and soothing — perfect for listening while it rains.
+    """
+
     try:
         res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-3.5-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.85,
-                "max_tokens": 1000
-            },
-            timeout=60,
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30
         )
+
         data = res.json()
-        if "choices" in data:
-            story = data["choices"][0]["message"]["content"].strip()
-            print("✅ Story generated successfully.")
-            return story
-        else:
-            print("⚠️ GPT returned error:", data)
-            return "Once upon a rainy night, a peaceful calm filled the world..."
+        story = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return story
     except Exception as e:
-        print("❌ GPT failed:", e)
-        return "On a quiet night, raindrops danced softly on the window..."
+        print("⚠️ Gemini API failed:", e)
+        return "The rain whispered softly against the glass, carrying memories of warmth and calm nights..."
+
 
 # === TTS ===
 def synthesize_audio(text, out_path):
@@ -107,3 +105,4 @@ if __name__ == "__main__":
     mix_audio(voice_path, RAIN_SOUND, mixed_audio)
     thumb = generate_thumbnail(title)
     render_video(mixed_audio, RAIN_VIDEO, thumb, final_path)
+
