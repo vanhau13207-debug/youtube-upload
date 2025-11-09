@@ -27,6 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install --use-deprecated=legacy-resolver -r requirements_final.txt
           pip install TTS==0.15.6 torch==2.0.1 torchaudio==2.0.2 google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy Pillow requests
+          pip install Pillow==9.5.0 moviepy==1.0.3
 
       - name: 🎬 Generate 2H Chill Video
         env:
