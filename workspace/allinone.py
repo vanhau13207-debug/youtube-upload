@@ -13,17 +13,28 @@ RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
 RAIN_VIDEO = os.path.join(ASSETS_DIR, "rain_bg.mp4")
 TARGET_DURATION = int(os.getenv("TARGET_DURATION", "7200"))
 
-# === STORY GENERATION (Gemini API miễn phí) ===
-def generate_story(seed):
-    print(f"🪶 Generating story using Gemini for seed: {seed}")
+# === SEO GENERATION (Gemini API) ===
+def generate_seo(story):
+    print("🧠 Generating SEO title, description, and tags with Gemini...")
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("❌ Missing GEMINI_API_KEY. Please add it in GitHub Secrets.")
-        return "On a quiet rainy night, soft raindrops touched the window, and peace filled the air..."
+        print("❌ Missing GEMINI_API_KEY, using fallback SEO...")
+        return (
+            "Rainy Night Chill Story 🌧️ Peaceful Sleep & Relaxation",
+            "A calming bedtime story with rain sounds and cinematic vibes — perfect for sleep, relaxation, or focus.",
+            "rain sounds,chill,relaxing music,sleep,study,storytelling,asmr,calm night,bedtime story,peaceful"
+        )
 
     prompt = f"""
-    Write a calm, emotional, and cinematic English bedtime story about {seed}.
-    Make it relaxing, detailed, and soothing — perfect for listening while it rains.
+    You are a YouTube SEO expert.
+    Based on this chill English bedtime story:
+    ---
+    {story[:1200]}
+    ---
+    Write optimized metadata for YouTube:
+    1️⃣ A catchy, emotional Title (max 80 chars, includes “Rain”, “Chill”, or “Relax”)
+    2️⃣ A human-like Description (2 paragraphs, natural tone)
+    3️⃣ 15 SEO tags (comma-separated, lowercase, no '#', focused on chill, sleep, and rain)
     """
 
     try:
@@ -31,15 +42,38 @@ def generate_story(seed):
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}",
             headers={"Content-Type": "application/json"},
             json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30
+            timeout=45
         )
-
         data = res.json()
-        story = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return story
+        content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        # === parse nội dung trả về ===
+        lines = content.splitlines()
+        title = ""
+        description = ""
+        tags = ""
+        for line in lines:
+            if not title and ("title:" in line.lower() or line.strip().startswith("1")):
+                title = line.split(":", 1)[-1].strip()
+            elif "description" in line.lower() or line.strip().startswith("2"):
+                description = "\n".join(lines[lines.index(line)+1:]).strip()
+                break
+
+        # tìm tags ở cuối văn bản
+        if "tags" in content.lower():
+            tags_part = content.lower().split("tags")[-1]
+            tags = tags_part.replace(":", "").replace("\n", ",").strip()
+
+        if not tags:
+            tags = "chill,relaxing,rain sounds,sleep,study,storytelling,asmr,calm night,peaceful,cozy"
+        return title[:80], description[:2000], tags[:500]
     except Exception as e:
-        print("⚠️ Gemini API failed:", e)
-        return "The rain whispered softly against the glass, carrying memories of warmth and calm nights..."
+        print("⚠️ SEO generation failed:", e)
+        return (
+            "Rain Ambience Story 🌧️ Chill Night Vibes for Sleep & Study",
+            "A 2-hour peaceful story with soft rain ambience, relaxing voice, and cinematic visuals.",
+            "rain sounds,chill,relaxing,asmr,bedtime story,calm night,peaceful,vibes,sleep,study,cozy"
+        )
 
 
 # === TTS ===
@@ -53,25 +87,101 @@ def synthesize_audio(text, out_path):
         shutil.copy(RAIN_SOUND, out_path)
     return out_path
 
-# === THUMBNAIL ===
-def generate_thumbnail(title):
-    try:
-        prompt = f"cinematic cozy rainy night scene, title: {title}, soft lighting, 4k"
-        img_url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
-        img_data = requests.get(img_url).content
-        thumb_path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
-        with open(thumb_path, "wb") as f:
-            f.write(img_data)
+# === THUMBNAIL GEMINI + FRAME FROM VIDEO ===
+def generate_thumbnail(title, story):
+    print("🖼️ Generating SEO thumbnail from rain_bg.mp4 via Gemini...")
 
-        img = Image.open(thumb_path).convert("RGB")
-        draw = ImageDraw.Draw(img)
-        font = ImageFont.truetype(FONT_PATH, 64)
-        draw.text((50, 620), title, fill="white", font=font)
-        img.save(thumb_path)
-        return thumb_path
+    import base64, cv2, numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ Missing GEMINI_API_KEY — fallback thumbnail.")
+        return "workspace/assets/default_thumb.jpg"
+
+    # === 1️⃣ Lấy 1 frame giữa video nền ===
+    bg_video = "workspace/assets/rain_bg.mp4"
+    cap = cv2.VideoCapture(bg_video)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, total // 2)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        print("⚠️ Fallback frame (empty image)")
+        frame = np.zeros((720, 1280, 3), np.uint8)
+
+    # Lưu frame tạm
+    frame_path = os.path.join(OUTPUT_DIR, "frame_base.jpg")
+    cv2.imwrite(frame_path, frame)
+
+    # === 2️⃣ Encode frame để gửi Gemini ===
+    with open(frame_path, "rb") as f:
+        img_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+    # === 3️⃣ Gọi Gemini sinh prompt mô tả thumbnail ===
+    prompt = f"""
+    You are a YouTube thumbnail designer & SEO expert.
+    Based on this image (rain scene) and the video title:
+    "{title}"
+    Write a short English description (1 sentence) for generating a cinematic, aesthetic thumbnail image for YouTube.
+    Make it optimized for emotional engagement and high CTR.
+    """
+
+    try:
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_base64}}
+                    ]
+                }]
+            },
+            timeout=40
+        )
+
+        data = res.json()
+        desc = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        print(f"🎨 Gemini thumbnail prompt: {desc}")
     except Exception as e:
-        print("⚠️ Thumbnail fallback:", e)
-        return None
+        print("⚠️ Gemini vision failed:", e)
+        desc = f"cinematic rainy night, cozy lights, aesthetic 4k scene, for: {title}"
+
+    # === 4️⃣ Gọi Pollinations để tạo ảnh từ prompt Gemini ===
+    try:
+        img_url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(desc)
+        img_data = requests.get(img_url).content
+        ai_thumb_path = os.path.join(OUTPUT_DIR, "ai_thumb.jpg")
+        with open(ai_thumb_path, "wb") as f:
+            f.write(img_data)
+    except Exception as e:
+        print("⚠️ Pollinations download failed:", e)
+        ai_thumb_path = frame_path
+
+    # === 5️⃣ Overlay SEO text lên thumbnail ===
+    img = Image.open(ai_thumb_path).convert("RGBA")
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 100))
+    img = Image.alpha_composite(img, overlay)
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font_title = ImageFont.truetype(FONT_PATH, 70)
+        font_sub = ImageFont.truetype(FONT_PATH, 36)
+    except:
+        font_title = ImageFont.load_default()
+        font_sub = ImageFont.load_default()
+
+    draw.text((60, 500), title[:60], fill=(255, 255, 255, 255), font=font_title)
+    draw.text((60, 650), "Relax • Sleep • Rain • Chill", fill=(200, 200, 200, 230), font=font_sub)
+
+    final_path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+    img.convert("RGB").save(final_path, quality=95)
+    print(f"✅ Thumbnail saved: {final_path}")
+    return final_path
+
 
 # === AUDIO MIX ===
 def mix_audio(voice_path, rain_path, out_path):
@@ -105,4 +215,5 @@ if __name__ == "__main__":
     mix_audio(voice_path, RAIN_SOUND, mixed_audio)
     thumb = generate_thumbnail(title)
     render_video(mixed_audio, RAIN_VIDEO, thumb, final_path)
+
 
