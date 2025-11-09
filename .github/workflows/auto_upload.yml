@@ -62,3 +62,14 @@ jobs:
         with:
           name: chill-video-output
           path: workspace/output/**
+      - name: 🤖 Auto Update Tool from ChillBot
+        run: |
+          git config --global user.email "chillbot@openai.com"
+          git config --global user.name "ChillBot-AI"
+          git pull
+          git add .
+          git commit -m "🤖 Auto updated tool by ChillBot" || echo "No changes"
+          git push https://$GH_BOT_TOKEN@github.com/${{ github.repository }} HEAD:main
+        env:
+          GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+
