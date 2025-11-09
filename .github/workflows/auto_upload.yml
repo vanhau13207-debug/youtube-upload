@@ -5,6 +5,9 @@ on:
   schedule:
     # 6h, 14h, 21h VN = 23h, 07h, 14h UTC
     - cron: "0 23,7,14 * * *"
+permissions:
+  contents: write
+
 
 jobs:
   build-and-run:
