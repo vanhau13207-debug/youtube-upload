@@ -1,86 +1,109 @@
 #!/usr/bin/env python3
-import os, random, requests
-from datetime import datetime
-from moviepy.editor import AudioFileClip, ImageClip, CompositeVideoClip
+import os, requests, shutil
+from moviepy.editor import *
 from TTS.api import TTS
 from PIL import Image, ImageDraw, ImageFont
 
 # === CONFIG ===
 OUTPUT_DIR = "workspace/output"
-FONT_PATH = "workspace/assets/font.ttf"
+ASSETS_DIR = "workspace/assets"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-DURATION_SECONDS = int(os.getenv("TARGET_DURATION", "7200"))
+FONT_PATH = os.path.join(ASSETS_DIR, "font.ttf")
+RAIN_SOUND = os.path.join(ASSETS_DIR, "rain.mp3")
+RAIN_VIDEO = os.path.join(ASSETS_DIR, "rain_bg.mp4")
+TARGET_DURATION = int(os.getenv("TARGET_DURATION", "7200"))
 
 # === STORY GENERATION ===
 def generate_story(seed):
-    prompt = f"Write a calm, cinematic, relaxing English bedtime story about {seed}. Tone: soft, cozy, emotional."
-    print("🪶 Generating story via OpenAI...")
-    res = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"},
-        json={
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.8,
-        },
-    )
+    prompt = f"Write a calm, cinematic bedtime story in English about {seed}. Tone: cozy, emotional, immersive."
+    print("🪶 Generating story via OpenAI API...")
     try:
+        res = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.85,
+                "max_tokens": 1000
+            },
+            timeout=60,
+        )
         data = res.json()
-        return data["choices"][0]["message"]["content"].strip()
+        if "choices" in data:
+            story = data["choices"][0]["message"]["content"].strip()
+            print("✅ Story generated successfully.")
+            return story
+        else:
+            print("⚠️ GPT returned error:", data)
+            return "Once upon a rainy night, a peaceful calm filled the world..."
     except Exception as e:
-        print("⚠️ GPT fallback text used:", e)
-        return "On a quiet rainy night, the world outside was calm..."
+        print("❌ GPT failed:", e)
+        return "On a quiet night, raindrops danced softly on the window..."
 
-# === TTS LOCAL (Coqui offline, free) ===
-def synthesize_audio(text, out_path="workspace/output/voice.wav"):
+# === TTS ===
+def synthesize_audio(text, out_path):
+    print("🎙️ Generating voice with Coqui TTS...")
     try:
-        print("🎙️ Generating voice with Coqui TTS (offline)...")
-        # Dùng single-speaker model thay vì multi-speaker để tránh lỗi
-        tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False, gpu=False)
-        tts.tts_to_file(text=text, file_path=out_path)
-        return out_path
+        tts = TTS(model_name="tts_models/en/vctk/vits", progress_bar=False, gpu=False)
+        tts.tts_to_file(text=text, file_path=out_path, speaker="p273")
     except Exception as e:
-        print("⚠️ Local TTS failed:", e)
-        return None
+        print("⚠️ TTS failed:", e)
+        shutil.copy(RAIN_SOUND, out_path)
+    return out_path
 
-# === THUMBNAIL AI ===
+# === THUMBNAIL ===
 def generate_thumbnail(title):
     try:
-        prompt = f"cinematic cozy rainy night scene, title: {title}, soft lighting, 4k, realistic"
+        prompt = f"cinematic cozy rainy night scene, title: {title}, soft lighting, 4k"
         img_url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
         img_data = requests.get(img_url).content
         thumb_path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
         with open(thumb_path, "wb") as f:
             f.write(img_data)
-        return thumb_path
-    except Exception as e:
-        print("⚠️ Thumbnail generation failed:", e)
-        img = Image.new("RGB", (1280, 720), (20, 20, 20))
+
+        img = Image.open(thumb_path).convert("RGB")
         draw = ImageDraw.Draw(img)
-        draw.text((50, 300), title, fill="white", font=ImageFont.truetype(FONT_PATH, 48))
-        thumb_path = os.path.join(OUTPUT_DIR, "thumbnail.jpg")
+        font = ImageFont.truetype(FONT_PATH, 64)
+        draw.text((50, 620), title, fill="white", font=font)
         img.save(thumb_path)
         return thumb_path
+    except Exception as e:
+        print("⚠️ Thumbnail fallback:", e)
+        return None
+
+# === AUDIO MIX ===
+def mix_audio(voice_path, rain_path, out_path):
+    print("🎧 Mixing voice + rain sound...")
+    os.system(
+        f'ffmpeg -y -i "{voice_path}" -i "{rain_path}" '
+        f'-filter_complex "[1:a]volume=0.25[a1];[0:a][a1]amix=inputs=2:duration=first" "{out_path}"'
+    )
+    return out_path
 
 # === RENDER VIDEO ===
-def render_video(audio_path, thumb_path, out_path="workspace/output/final_video.mp4"):
-    print("🎬 Rendering video (2h, 720p, 24fps)...")
-    bg = ImageClip(thumb_path).resize(height=720)
+def render_video(audio_path, bg_video_path, thumb_path, out_path):
+    print("🎬 Rendering 2-hour chill video...")
+    os.system(f'ffmpeg -y -stream_loop -1 -i "{bg_video_path}" -t {TARGET_DURATION} -c copy "{OUTPUT_DIR}/temp_bg.mp4"')
+    bg_video_path = f"{OUTPUT_DIR}/temp_bg.mp4"
     audio = AudioFileClip(audio_path)
-    video = bg.set_duration(audio.duration).set_audio(audio)
-    video.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac", bitrate="2000k")
+    bg = VideoFileClip(bg_video_path).loop(duration=audio.duration)
+    final = bg.set_audio(audio).resize(height=720)
+    final.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac", bitrate="2500k")
     print(f"✅ Render complete: {out_path}")
     return out_path
 
-# === MAIN ===
 if __name__ == "__main__":
     seed = "A cozy night by the lake with rain sounds"
+    title = f"🌧️ {seed.title()} | 2H Chill Story for Sleep & Relaxation"
     story = generate_story(seed)
-    title = "Relaxing Rainy Story 🌧️ " + seed
+    voice_path = os.path.join(OUTPUT_DIR, "voice.wav")
+    mixed_audio = os.path.join(OUTPUT_DIR, "mixed.wav")
+    final_path = os.path.join(OUTPUT_DIR, "final_video.mp4")
+    synthesize_audio(story, voice_path)
+    mix_audio(voice_path, RAIN_SOUND, mixed_audio)
     thumb = generate_thumbnail(title)
-    voice = synthesize_audio(story)
-    if not voice:
-        print("⚠️ Falling back to ambient rain sound...")
-        voice = "workspace/assets/rain.mp3"
-    render_video(voice, thumb)
-
+    render_video(mixed_audio, RAIN_VIDEO, thumb, final_path)
