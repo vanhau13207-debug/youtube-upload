@@ -1,79 +1,88 @@
-#!/usr/bin/env python3
-import os, datetime, json
+import os
+from datetime import datetime, timedelta, time
+import json
 from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 
-VIDEO_PATH = "workspace/output/final_video.mp4"
-THUMB_PATH = "workspace/output/thumbnail.jpg"
-META_PATH = "workspace/output/meta.json"
+UPLOAD_TIMES_VN = [
+    time(8, 0),   # 08:00 VN
+    time(16, 0),  # 16:00 VN
+    time(23, 0),  # 23:00 VN
+]
 
-CLIENT_ID = os.getenv("YT_CLIENT_ID")
-CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")
+def next_upload_time_vn():
+    now = datetime.utcnow() + timedelta(hours=7)
+    today = now.date()
 
-if not all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
-    raise Exception("Missing YouTube credentials in repo secrets!")
+    for t in UPLOAD_TIMES_VN:
+        sched = datetime.combine(today, t)
+        if sched > now:
+            return sched - timedelta(hours=7)
 
-# build credentials
-creds_info = {
-    "token": "",
-    "refresh_token": REFRESH_TOKEN,
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "client_id": CLIENT_ID,
-    "client_secret": CLIENT_SECRET,
-}
-creds = Credentials.from_authorized_user_info(creds_info)
+    # tomorrow 08:00 VN
+    tomorrow = today + timedelta(days=1)
+    sched = datetime.combine(tomorrow, UPLOAD_TIMES_VN[0])
+    return sched - timedelta(hours=7)
 
-youtube = build("youtube", "v3", credentials=creds)
+def load_seo():
+    with open("workspace/output/seo.txt") as f:
+        txt = f.read()
 
-# compute publish time (next VN target slot logic)
-now_vn = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-# slots (VN): 8,16,23 -> pick next
-slots = [8,16,23]
-for h in slots:
-    candidate = now_vn.replace(hour=h, minute=0, second=0, microsecond=0)
-    if now_vn.hour < h or (now_vn.hour == h and now_vn.minute < 1):
-        publish_local = candidate
-        break
-else:
-    publish_local = (now_vn + datetime.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    title = txt.split("TITLE:")[1].split("DESCRIPTION:")[0].strip()
+    description = txt.split("DESCRIPTION:")[1].split("TAGS:")[0].strip()
+    tags = txt.split("TAGS:")[1].strip().split(",")
 
-publish_utc = (publish_local - datetime.timedelta(hours=7)).isoformat() + "Z"
-print("📅 Scheduling upload for", publish_utc)
+    return title, description, tags
 
-if not os.path.exists(VIDEO_PATH):
-    raise Exception("Video not found at " + VIDEO_PATH)
+def upload_video():
+    title, description, tags = load_seo()
 
-meta = {"title":"Auto Chill","description":"Auto video","tags": ["chill","rain"]}
-if os.path.exists(META_PATH):
-    try:
-        meta = json.load(open(META_PATH,"r",encoding="utf-8"))
-    except:
-        pass
+    video_path = "workspace/output/final_video.mp4"
+    thumb_path = "workspace/output/thumbnail.jpg"
 
-body = {
-    "snippet": {
-        "title": meta.get("title"),
-        "description": meta.get("description"),
-        "tags": meta.get("tags"),
-        "categoryId": "22"
-    },
-    "status": {
-        "privacyStatus":"private",
-        "publishAt": publish_utc,
-        "selfDeclaredMadeForKids": False
+    sched_utc = next_upload_time_vn()
+    sched_iso = sched_utc.replace(microsecond=0).isoformat() + "Z"
+
+    print("📅 Scheduling upload at:", sched_iso)
+
+    creds = Credentials.from_authorized_user_info(
+        {
+            "client_id": os.getenv("YT_CLIENT_ID"),
+            "client_secret": os.getenv("YT_CLIENT_SECRET"),
+            "refresh_token": os.getenv("YT_REFRESH_TOKEN"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    )
+
+    youtube = build("youtube", "v3", credentials=creds)
+
+    request_body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": tags
+        },
+        "status": {
+            "privacyStatus": "private",
+            "publishAt": sched_iso,
+            "selfDeclaredMadeForKids": False
+        }
     }
-}
 
-media = VIDEO_PATH
-request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-resp = request.execute()
-vid = resp.get("id")
-print("✅ Scheduled video", vid, "for", publish_utc)
-# set thumbnail if exists
-if os.path.exists(THUMB_PATH):
-    try:
-        youtube.thumbnails().set(videoId=vid, media_body=THUMB_PATH).execute()
-        print("✅ Thumbnail set.")
-    except Exception as e:
-        print("⚠️ Thumbnail set failed:", e)
+    upload = youtube.videos().insert(
+        part="snippet,status",
+        body=request_body,
+        media_body=video_path
+    ).execute()
+
+    # Thumbnail
+    youtube.thumbnails().set(
+        videoId=upload["id"],
+        media_body=thumb_path
+    ).execute()
+
+    print("✅ Scheduled video:", upload["id"])
+
+if __name__ == "__main__":
+    upload_video()
