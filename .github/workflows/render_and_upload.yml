@@ -1,8 +1,8 @@
-name: Render & Upload Chill Video (Auto)
+name: Render & Upload Chill Video
 
 on:
   schedule:
-    - cron: "0 23 * * *"   # run daily at 06:00 VN (example) — adjust as needed
+    - cron: "0 23 * * *"    # mỗi ngày 06:00 VN
   workflow_dispatch:
 
 jobs:
@@ -14,43 +14,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Coqui TTS models
-        uses: actions/cache@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
-          path: ~/.local/share/tts
-          key: tts-model-cache
+          python-version: "3.10"
 
-      - name: Remove pip cache & numpy leftovers
+      - name: Clear pip cache & remove numpy leftovers
         run: |
           pip cache purge || true
           rm -rf ~/.cache/pip
           rm -rf /usr/local/lib/python3.10/site-packages/numpy*
           rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
 
-      - name: Force install numpy 1.22
+      - name: Install numpy 1.22 (wheel only)
         run: |
-          echo "numpy==1.22.0" > numpy_fix.txt
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir --force-reinstall --no-deps -r numpy_fix.txt
+          python -m pip install numpy==1.22.0 --no-cache-dir --only-binary=:all:
 
-      - name: Install system deps
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Install Python requirements (no-deps to avoid resolver conflicts)
+      - name: Install Python deps
         run: |
           python -m pip install --no-cache-dir --no-deps -r requirements_final.txt
 
-      - name: Run allinone.py (render)
+      - name: Run allinone.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           COQUI_MODEL: ${{ secrets.COQUI_MODEL }}
           RAIN_FILE: assets/rain.mp3
           RAIN_BG: assets/rain_bg.mp4
           TARGET_DURATION: "7200"
-        run: |
-          python workspace/allinone.py
+        run: python workspace/allinone.py
 
       - name: Upload to YouTube
         env:
@@ -58,11 +55,10 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
-        run: |
-          python workspace/auto_upload.py
+        run: python workspace/auto_upload.py
 
-      - name: Upload artifact (backup)
+      - name: Artifact backup
         uses: actions/upload-artifact@v4
         with:
-          name: chill-output
+          name: final-output
           path: workspace/output/**
