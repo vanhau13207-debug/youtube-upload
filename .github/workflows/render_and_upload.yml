@@ -53,7 +53,7 @@ jobs:
           echo "========================================"
 
       # ⭐⭐ BLOCK FIX LỖI NUMPY CHUẨN CHỈNH CHO COQUI ⭐⭐
-      - name: Install Python dependencies (Coqui FIXED)
+      - name: Install Python dependencies (FIXED)
         run: |
           pip install --upgrade pip setuptools wheel
 
@@ -63,14 +63,13 @@ jobs:
           rm -rf /usr/local/lib/python3.9/dist-packages/numpy* || true
           rm -rf /usr/local/lib/python3.9/site-packages/numpy* || true
 
-          # CÀI NUMPY CHUẨN CHO COQUI
-          echo "Installing numpy 1.21.6 (compatible with TTS 0.13–0.15)..."
+          # ⭐ CÀI NUMPY 1.21.6 TRƯỚC (TTS yêu cầu)
           pip install --no-cache-dir numpy==1.21.6
 
-          # CÀI SCIPY PHÙ HỢP
+          # ⭐ CÀI scipy phiên bản tương thích
           pip install --no-cache-dir scipy==1.10.0
 
-          # Cài toàn bộ dependencies còn lại
+          # ⭐ SAU ĐÓ mới được cài requirements_final
           pip install --no-cache-dir -r requirements_final.txt
 
       - name: Run allinone.py
