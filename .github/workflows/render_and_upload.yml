@@ -2,7 +2,7 @@ name: Render & Upload Chill Video
 
 on:
   schedule:
-    - cron: "0 23 * * *"    # mỗi ngày 06:00 VN
+    - cron: "0 23 * * *"
   workflow_dispatch:
 
 jobs:
@@ -14,19 +14,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ⭐ BẮT BUỘC: ép dùng Python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Clear pip cache & remove numpy leftovers
+      - name: Verify Python version
+        run: python3 --version
+
+      - name: Clear pip cache & numpy leftovers
         run: |
           pip cache purge || true
           rm -rf ~/.cache/pip
           rm -rf /usr/local/lib/python3.10/site-packages/numpy*
           rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
 
-      - name: Install numpy 1.22 (wheel only)
+      - name: Install numpy 1.22.0 wheel
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy==1.22.0 --no-cache-dir --only-binary=:all:
@@ -56,9 +60,3 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
         run: python workspace/auto_upload.py
-
-      - name: Artifact backup
-        uses: actions/upload-artifact@v4
-        with:
-          name: final-output
-          path: workspace/output/**
