@@ -8,7 +8,6 @@ on:
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -19,51 +18,23 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Verify Python version
-        run: python3 --version
-
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libsndfile1 espeak-ng espeak
+          sudo apt-get install -y ffmpeg libsndfile1 espeak-ng espeak fonts-dejavu-core
 
-      - name: Clear ALL pip cache
-        run: |
-          pip cache purge || true
-          rm -rf ~/.cache/pip || true
-
-      - name: Install numpy + scipy trước (bắt buộc cho Coqui)
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip setuptools wheel
-          pip install --no-cache-dir numpy==1.21.6
-          pip install --no-cache-dir scipy==1.10.0
-
-      - name: Install Python dependencies (FIXED)
-        run: |
-          pip install --upgrade pip setuptools wheel
-
-          # ⚠ Xóa sạch numpy để tránh conflict
-          pip uninstall -y numpy || true
-          rm -rf ~/.cache/pip || true
-
-          # ⭐ Cài numpy đúng bản Coqui yêu cầu
-          pip install --no-cache-dir numpy==1.21.6
-
-          # ⭐ Thêm SCIPY tương thích
-          pip install scipy==1.10.0
-
-          # ⭐ FIX THIẾU LIB Requests (bắt buộc)
-          pip install certifi charset-normalizer idna urllib3
-
-          # ⭐ Cuối cùng mới install requirements
-          pip install --no-cache-dir -r requirements_final.txt
+          pip install numpy==1.21.6 scipy==1.10.0
+          pip install -r requirements_final.txt
 
       - name: Run allinone.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           COQUI_MODEL: ${{ secrets.COQUI_MODEL }}
-          RAIN_FILE: assets/rain.mp3
-          RAIN_BG: assets/rain_bg.mp4
+          RAIN_FILE: workspace/assets/rain.mp3
+          RAIN_BG: workspace/assets/rain_bg.mp4
           TARGET_DURATION: "7200"
         run: python workspace/allinone.py
 
