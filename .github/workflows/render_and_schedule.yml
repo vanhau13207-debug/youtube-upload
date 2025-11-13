@@ -1,12 +1,27 @@
+- name: DEBUG – Find where numpy==1.24.4 is coming from
+  run: |
+    echo "===== FIND numpy in all files ====="
+    grep -R "numpy" -n . || true
+
+    echo "===== LIST all requirements files ====="
+    find . -iname "*require*" -maxdepth 4
+
+    echo "===== SHOW requirements_final.txt ====="
+    cat requirements_final.txt || true
+
+    echo "===== SHOW requirements.txt ====="
+    cat requirements.txt || true
+
+
 - name: Remove ALL pip cache and numpy leftovers
   run: |
     pip cache purge || true
     rm -rf ~/.cache/pip
     rm -rf /usr/local/lib/python3.10/site-packages/numpy*
     rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
+    pip install --upgrade pip
 
 - name: Install deps (forced clean)
   run: |
-    pip install --upgrade pip
     pip install --no-cache-dir --no-deps numpy==1.22.0
     pip install --no-cache-dir -r requirements_final.txt
