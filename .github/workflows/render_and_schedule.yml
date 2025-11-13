@@ -27,6 +27,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
+      - name: Debug requirements file
+        run: |
+          echo "=== requirements_final.txt ==="
+          cat requirements_final.txt || true
+
+          echo "=== requirements.txt ==="
+          cat requirements.txt || true
+
+          echo "=== find all req files ==="
+          find . -name "*require*" -maxdepth 3
+
 
       - name: Install Python requirements
         run: |
