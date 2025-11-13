@@ -38,9 +38,25 @@ jobs:
           pip install --no-cache-dir numpy==1.21.6
           pip install --no-cache-dir scipy==1.10.0
 
-      - name: Cài dependencies từ requirements_final.txt
+      - name: Install Python dependencies (FIXED)
         run: |
-          pip install --no-cache-dir --no-deps -r requirements_final.txt
+          pip install --upgrade pip setuptools wheel
+
+          # ⚠ Xóa sạch numpy để tránh conflict
+          pip uninstall -y numpy || true
+          rm -rf ~/.cache/pip || true
+
+          # ⭐ Cài numpy đúng bản Coqui yêu cầu
+          pip install --no-cache-dir numpy==1.21.6
+
+          # ⭐ Thêm SCIPY tương thích
+          pip install scipy==1.10.0
+
+          # ⭐ FIX THIẾU LIB Requests (bắt buộc)
+          pip install certifi charset-normalizer idna urllib3
+
+          # ⭐ Cuối cùng mới install requirements
+          pip install --no-cache-dir -r requirements_final.txt
 
       - name: Run allinone.py
         env:
