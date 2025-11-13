@@ -7,10 +7,10 @@ torchaudio==0.13.1
 # Coqui TTS
 TTS==0.15.6
 
-# Numpy version bắt buộc
+# Numpy version bắt buộc cho TTS
 numpy==1.22.0
 
-# Dependencies khác tương thích với numpy 1.22.0
+# Dependencies tương thích
 scipy==1.10.0
 soundfile==0.12.1
 moviepy==1.0.3
