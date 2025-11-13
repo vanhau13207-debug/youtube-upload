@@ -22,49 +22,26 @@ jobs:
       - name: Verify Python version
         run: python3 --version
 
-      - name: Install system dependencies
+      - name: Install system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      # -------------------------------
-      # FORCE RESET TO GUARANTEE CLEAN ENV
-      # -------------------------------
-      - name: Hard reset pip & numpy
+      - name: Clear ALL pip cache
         run: |
-          pip uninstall -y numpy || true
           pip cache purge || true
           rm -rf ~/.cache/pip || true
-          rm -rf /usr/local/lib/python3.9/dist-packages/numpy* || true
-          rm -rf /usr/local/lib/python3.9/site-packages/numpy* || true
 
-      # -------------------------------
-      # SHOW EXACT FILE LOADED
-      # -------------------------------
-      - name: DEBUG — show requirements_final.txt
-        run: |
-          echo "===== CONTENT OF requirements_final.txt ====="
-          cat requirements_final.txt
-
-      # -------------------------------
-      # INSTALL DEPENDENCIES (FIXED)
-      # -------------------------------
-      - name: Install Python dependencies
+      - name: Install numpy + scipy trước (bắt buộc cho Coqui)
         run: |
           pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir numpy==1.21.6
+          pip install --no-cache-dir scipy==1.10.0
 
-          # numpy đúng bản Coqui TTS yêu cầu
-          pip install numpy==1.21.6
+      - name: Cài dependencies từ requirements_final.txt
+        run: |
+          pip install --no-cache-dir --no-deps -r requirements_final.txt
 
-          # scipy tương thích
-          pip install scipy==1.10.0
-
-          # sau đó cài bộ requirements
-          pip install -r requirements_final.txt --no-cache-dir --no-deps
-
-      # -------------------------------
-      # RUN BUILDER
-      # -------------------------------
       - name: Run allinone.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
