@@ -1,0 +1,68 @@
+name: Render & Upload Chill Video (Auto)
+
+on:
+  schedule:
+    - cron: "0 23 * * *"   # run daily at 06:00 VN (example) — adjust as needed
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Coqui TTS models
+        uses: actions/cache@v3
+        with:
+          path: ~/.local/share/tts
+          key: tts-model-cache
+
+      - name: Remove pip cache & numpy leftovers
+        run: |
+          pip cache purge || true
+          rm -rf ~/.cache/pip
+          rm -rf /usr/local/lib/python3.10/site-packages/numpy*
+          rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
+
+      - name: Force install numpy 1.22
+        run: |
+          echo "numpy==1.22.0" > numpy_fix.txt
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir --force-reinstall --no-deps -r numpy_fix.txt
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1
+
+      - name: Install Python requirements (no-deps to avoid resolver conflicts)
+        run: |
+          python -m pip install --no-cache-dir --no-deps -r requirements_final.txt
+
+      - name: Run allinone.py (render)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          COQUI_MODEL: ${{ secrets.COQUI_MODEL }}
+          RAIN_FILE: assets/rain.mp3
+          RAIN_BG: assets/rain_bg.mp4
+          TARGET_DURATION: "7200"
+        run: |
+          python workspace/allinone.py
+
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
+        run: |
+          python workspace/auto_upload.py
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: chill-output
+          path: workspace/output/**
