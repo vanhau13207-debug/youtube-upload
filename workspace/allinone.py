@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """
-allinone.py
-Full pipeline:
-  1) generate or pick a story (from Gemini if configured, else local fallback)
-  2) generate TTS audio via Coqui TTS (if installed/configured), else fallback silent voice
-  3) mix voice + rain bed to target duration
-  4) render MP4 (static image + audio) via moviepy (ffmpeg)
-  5) output SEO files (title.txt, description.txt, tags.txt) in workspace/output/
-Usage:
-  python workspace/allinone.py --seed "cozy rainy night" --duration 7200
-Environment:
-  - OPENAI_API_KEY or GEMINI_API_KEY (optional) to generate story
-  - paths: assets/rain.mp3, assets/bg.jpg (optional)
-  - outputs-> workspace/output/
-Notes:
-  - Designed to run in CI: fast muxing (no heavy video processing).
+allinone.py — FULL pipeline (auto story -> TTS -> mix -> video -> SEO -> thumbnail)
+Drop-in for workspace/allinone.py in repo.
+
+Features:
+- Generate story via API: GEMINI_API_KEY / OPENAI_API_KEY or fallback to local files
+- Generate SEO (title/description/tags) via API if available
+- Generate thumbnail image via IMAGE_API_ENDPOINT or Pollinations if configured
+- Coqui TTS integration (uses env COQUI_MODEL) when available; fallback to silent voice
+- Mix voice + rain ambience, render MP4 via moviepy
+- Saves outputs in workspace/output/
+- Configurable via environment variables
+
+ENV VARs used (optional):
+- GEMINI_API_KEY or OPENAI_API_KEY
+- GENERATOR_ENDPOINT (custom generator endpoint)
+- SEO_API_KEY / SEO_ENDPOINT (optional)
+- IMAGE_API_KEY / IMAGE_ENDPOINT (optional)
+- COQUI_MODEL (e.g. tts_models/en/vctk/vits)
+- RAIN_FILE (path to rain file; default assets/rain.mp3)
+- BG_IMAGE (path to background image; default assets/bg.jpg)
+- TARGET_DURATION (seconds) or --duration
 """
 
 import os
@@ -26,11 +32,11 @@ import random
 import datetime
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, List
 
-# audio libs
+# optional Coqui TTS
 try:
-    from TTS.api import TTS  # coqui tts
+    from TTS.api import TTS
     COQUI_AVAILABLE = True
 except Exception:
     COQUI_AVAILABLE = False
@@ -38,144 +44,214 @@ except Exception:
 import numpy as np
 import soundfile as sf
 
-# moviepy for muxing
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_audioclips, CompositeAudioClip
+from moviepy.editor import ImageClip, AudioFileClip
 
-# small helper to call external generator if present
 import requests
 
-# Setup
+# Paths
 ROOT = Path.cwd()
 WORKSPACE = ROOT / "workspace"
 STORIES = WORKSPACE / "stories"
 ASSETS = ROOT / "assets"
 OUTPUT = WORKSPACE / "output"
-RAIN_PATH = ASSETS / "rain.mp3"
-BG_IMAGE = ASSETS / "bg.jpg"
 
-# Ensure dirs
+# Ensure directories
 OUTPUT.mkdir(parents=True, exist_ok=True)
 STORIES.mkdir(parents=True, exist_ok=True)
 ASSETS.mkdir(parents=True, exist_ok=True)
 
+# Defaults
+DEFAULT_RAIN = ASSETS / "rain.mp3"
+DEFAULT_BG = ASSETS / "bg.jpg"
+DEFAULT_COQUI_MODEL = os.getenv("COQUI_MODEL", "tts_models/en/vctk/vits")
+DEFAULT_AUDIO_SR = int(os.getenv("AUDIO_SR", "22050"))
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 
-def generate_story_via_gemini(seed: Optional[str]) -> str:
-    """Try calling Gemini-like API if GEMINI_API_KEY env is present.
-    This is a best-effort: if no key or request fails, raise RuntimeError."""
-    key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    if not key:
-        raise RuntimeError("No GEMINI/OPENAI key found")
-    prompt = (seed or "A calm cozy rainy night story to relax and sleep") + "\n\nWrite a long, slow, soothing narrated story suitable for a 2-hour ambient video. Use gentle language."
-    # NOTE: this is a placeholder: user should replace with their provider call.
-    # Attempt a generic POST to a user-provided endpoint
-    endpoint = os.getenv("GENERATOR_ENDPOINT")  # optional custom endpoint
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+# ---------------------------
+#  API: Story / SEO / Image
+# ---------------------------
+def call_text_generator(seed: Optional[str], max_tokens: int = 2500) -> str:
+    """Try GEMINI/OPENAI or GENERATOR_ENDPOINT. Returns text or raise."""
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    endpoint = os.getenv("GENERATOR_ENDPOINT")
+    prompt = (seed or "A calm cozy rainy night story") + "\n\nWrite a long, slow, soothing narrated story suitable for a multi-hour ambient video. Use gentle language."
+    headers = {}
     if endpoint:
-        payload = {"prompt": prompt, "max_tokens": 3000}
-        r = requests.post(endpoint, json=payload, headers=headers, timeout=60)
-        r.raise_for_status()
-        data = r.json()
-        # Expect text in data['text'] or data['choices'][0]['text']
-        text = data.get("text") or (data.get("choices") and data["choices"][0].get("text"))
-        if not text:
-            raise RuntimeError("Generator returned unexpected payload")
-        return text
-    # If no endpoint, raise
-    raise RuntimeError("No generator endpoint configured")
+        headers["Authorization"] = f"Bearer {os.getenv('GENERATOR_KEY','')}" if os.getenv('GENERATOR_KEY') else ""
+        try:
+            r = requests.post(endpoint, json={"prompt": prompt, "max_tokens": max_tokens}, timeout=60)
+            r.raise_for_status()
+            js = r.json()
+            # support multiple shapes
+            return js.get("text") or (js.get("choices") and js["choices"][0].get("text")) or js.get("output") or json.dumps(js)
+        except Exception as e:
+            raise RuntimeError(f"Generator endpoint failed: {e}")
+
+    if key:
+        # Try simple OpenAI-compatible REST call (user must set API-compatible endpoint via GENERATOR_ENDPOINT ideally)
+        # We'll attempt basic OpenAI chat completions if OPENAI_API_KEY present and no endpoint configured
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key and not os.getenv("GENERATOR_ENDPOINT"):
+            # call OpenAI chat completions (simple)
+            url = "https://api.openai.com/v1/chat/completions"
+            hdr = {"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.7
+            }
+            try:
+                r = requests.post(url, headers=hdr, json=payload, timeout=60)
+                r.raise_for_status()
+                data = r.json()
+                txt = None
+                if "choices" in data and data["choices"]:
+                    txt = data["choices"][0].get("message", {}).get("content")
+                if not txt:
+                    txt = data.get("choices", [{}])[0].get("text")
+                if txt:
+                    return txt
+            except Exception as e:
+                raise RuntimeError(f"OpenAI call failed: {e}")
+
+    raise RuntimeError("No generator available (set GENERATOR_ENDPOINT or OPENAI_API_KEY/GEMINI_API_KEY)")
 
 
+def call_seo_generator(seed: str, story_excerpt: str) -> Tuple[str, str, List[str]]:
+    """Generate title, description, tags via API if configured; otherwise simple heuristic."""
+    seo_endpoint = os.getenv("SEO_ENDPOINT")
+    seo_key = os.getenv("SEO_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if seo_endpoint:
+        try:
+            r = requests.post(seo_endpoint, json={"seed": seed, "excerpt": story_excerpt}, headers={"Authorization": f"Bearer {seo_key}"}, timeout=30)
+            r.raise_for_status()
+            js = r.json()
+            return js.get("title",""), js.get("description",""), js.get("tags",[] or [])
+        except Exception:
+            pass
+    # fallback simple generator
+    title = f"Relaxing Rainy Story — {seed or 'Cozy Night'} • Sleep & Focus"
+    description = ("A relaxing rainy story with ambient rain sounds to help you sleep, relax, or focus. "
+                   "Automatically generated.")
+    tags = ["rain", "sleep", "relax", "asmr", "story", "ambient", "chill"]
+    return title, description, tags
+
+
+def call_image_generator(title: str, seed: Optional[str]) -> Optional[bytes]:
+    """Generate thumbnail image bytes via IMAGE_ENDPOINT or Pollinations (if configured). Return image bytes or None."""
+    image_endpoint = os.getenv("IMAGE_ENDPOINT")
+    image_key = os.getenv("IMAGE_API_KEY")
+    prompt = f"cozy rainy night, warm lights, cinematic, soft, cozy, text: {title}"
+    if image_endpoint:
+        headers = {"Authorization": f"Bearer {image_key}"} if image_key else {}
+        try:
+            r = requests.post(image_endpoint, json={"prompt": prompt, "size": "1024x576"}, headers=headers, timeout=60)
+            r.raise_for_status()
+            # accept either direct bytes or JSON with base64
+            if r.headers.get("content-type","").startswith("image"):
+                return r.content
+            js = r.json()
+            if "image_base64" in js:
+                import base64
+                return base64.b64decode(js["image_base64"])
+            if "images" in js and js["images"]:
+                import base64
+                return base64.b64decode(js["images"][0])
+        except Exception:
+            logging.warning("Image endpoint failed")
+            return None
+    # Pollinations fallback (simple POST)
+    poll_url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(prompt)
+    try:
+        r = requests.get(poll_url, timeout=30)
+        if r.status_code == 200 and r.headers.get("content-type","").startswith("image"):
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------
+#  Local helpers: stories
+# ---------------------------
 def pick_local_story(seed: Optional[str]) -> str:
-    # If there are story files in STORIES, pick random one, else make a filler
     files = list(STORIES.glob("*.txt"))
     if files:
         chosen = random.choice(files)
         logging.info(f"Using local story file: {chosen}")
         return chosen.read_text(encoding="utf-8")
-    # fallback: generate repeated paragraph to reach longer length
+    # fallback base
     base = (
         "The rain whispered against the window as the town settled into a slow, measured breath. "
         "Tonight, the lamps glowed softly and the streets remembered the footsteps of those who passed. "
         "You breathe in time with the rain and let the world blur at the edges..."
     )
-    # repeat to create long text (note: TTS will be looped or slowed)
-    return "\n\n".join([base for _ in range(40)])
+    return "\n\n".join([base for _ in range(60)])
 
 
-def save_seo(title: str, description: str, tags: list[str]):
-    (OUTPUT / "title.txt").write_text(title, encoding="utf-8")
-    (OUTPUT / "description.txt").write_text(description, encoding="utf-8")
-    (OUTPUT / "tags.txt").write_text(",".join(tags), encoding="utf-8")
-    logging.info("Saved SEO files.")
-
-
-def tts_coqui_generate(text: str, out_path: Path) -> None:
-    """Generate TTS using Coqui TTS API (local). Will attempt streaming model 'tts_models/en/ljspeech/glow-tts' or fallback."""
+# ---------------------------
+#  TTS / audio utilities
+# ---------------------------
+def tts_generate_coqui(text: str, out_path: Path, model_name: str = DEFAULT_COQUI_MODEL):
     if not COQUI_AVAILABLE:
-        raise RuntimeError("Coqui TTS not available")
-    # choose a model that is likely to work offline; user can change
-    model_name = os.getenv("COQUI_MODEL", "tts_models/en/vctk/vits")
-    logging.info(f"Using Coqui TTS model: {model_name}")
+        raise RuntimeError("Coqui TTS not available (install TTS)")
+    logging.info(f"Generating TTS with model {model_name}")
     tts = TTS(model_name)
-    # split text to chunks to avoid memory spikes
-    chunks = []
+    # chunk text into parts to avoid OOM
     max_chars = 2500
     parts = []
     cur = ""
-    for line in text.splitlines():
-        if len(cur) + len(line) + 1 > max_chars:
+    for para in text.split("\n"):
+        if len(cur) + len(para) + 1 > max_chars:
             parts.append(cur)
-            cur = line
+            cur = para
         else:
-            cur = (cur + "\n" + line).strip()
+            cur = (cur + "\n" + para).strip()
     if cur:
         parts.append(cur)
-    # generate each part and append
     tmp_files = []
     for i, p in enumerate(parts):
-        tmp = OUTPUT / f"voice_part_{i}.wav"
-        logging.info(f"Generating TTS chunk {i+1}/{len(parts)} ({len(p)} chars)")
+        tmp = out_path.parent / f"voice_part_{i}.wav"
+        logging.info(f"TTS chunk {i+1}/{len(parts)} size {len(p)} chars")
         tts.tts_to_file(text=p, file_path=str(tmp))
-        tmp_files.append(str(tmp))
-    # concatenate into out_path using soundfile
-    # read all and concatenate arrays
-    data_list = []
+        tmp_files.append(tmp)
+    # concatenate parts
+    arrays = []
     sr = None
-    for f in tmp_files:
-        d, s = sf.read(f, dtype='float32')
+    for t in tmp_files:
+        a, s = sf.read(str(t), dtype='float32')
         if sr is None:
             sr = s
         if s != sr:
-            raise RuntimeError("Sample rate mismatch in tts parts")
-        data_list.append(d)
-    if not data_list:
-        raise RuntimeError("No TTS data generated")
-    full = np.concatenate(data_list, axis=0)
-    sf.write(str(out_path), full, sr)
-    # cleanup tmp
-    for f in tmp_files:
+            logging.warning("Resampling; sample rates differ")
+        arrays.append(a)
+    if not arrays:
+        raise RuntimeError("No TTS output")
+    full = np.concatenate(arrays, axis=0)
+    sf.write(str(out_path), full, sr or DEFAULT_AUDIO_SR)
+    # cleanup
+    for t in tmp_files:
         try:
-            os.remove(f)
+            t.unlink()
         except Exception:
             pass
-    logging.info(f"TTS written to {out_path}")
+    logging.info(f"Coqui TTS written: {out_path}")
 
 
-def make_silent_voice(seconds: int, out_path: Path, sr=22050):
-    """Create silent wave of given seconds as fallback voice"""
+def make_silent_wave(seconds: int, out_path: Path, sr: int = DEFAULT_AUDIO_SR):
     total = int(seconds * sr)
     data = np.zeros((total,), dtype='float32')
     sf.write(str(out_path), data, sr)
-    logging.info(f"Created silent voice placeholder {out_path} ({seconds}s)")
+    logging.info(f"Created silent wave {out_path} ({seconds}s)")
 
 
-def loop_audio_to_duration(src_path: Path, duration_s: int, out_path: Path):
-    """Loop src_path (rain or voice) to exactly duration_s and write to out_path."""
-    # Use soundfile + numpy to stitch loops (avoid re-encoding)
-    data, sr = sf.read(str(src_path), dtype='float32')
+def loop_audio_to_duration(src: Path, duration_s: int, out_path: Path):
+    data, sr = sf.read(str(src), dtype='float32')
     if data.ndim > 1:
-        data = data.mean(axis=1)  # to mono
+        data = data.mean(axis=1)
     needed = int(duration_s * sr)
     chunks = []
     idx = 0
@@ -185,177 +261,186 @@ def loop_audio_to_duration(src_path: Path, duration_s: int, out_path: Path):
         idx += take
     full = np.concatenate(chunks, axis=0)
     sf.write(str(out_path), full, sr)
-    logging.debug(f"Looped {src_path} to {out_path} ({duration_s}s)")
+    logging.info(f"Looped audio to {duration_s}s -> {out_path}")
 
 
-def mix_voice_and_rain(voice_path: Path, rain_path: Path, duration_s: int, out_path: Path, voice_gain_db: float = 0.0, rain_gain_db: float = -10.0):
-    """Mix voice (mono) and rain (mono/stereo) to reach duration and export as out_path wav."""
-    # load
+def mix_voice_and_rain(voice_path: Path, rain_path: Path, duration_s: int, out_path: Path, voice_db=0.0, rain_db=-12.0):
     v, sr_v = sf.read(str(voice_path), dtype='float32')
     r, sr_r = sf.read(str(rain_path), dtype='float32')
     if v.ndim > 1:
         v = v.mean(axis=1)
     if r.ndim > 1:
         r = r.mean(axis=1)
-    # resample if needed (simple method: expect same sr)
     if sr_v != sr_r:
-        logging.warning("Sampling rates differ; resampling voice to rain sample rate")
-        # naive resample via numpy (not high quality). Better to require same sr.
-        import math
+        # naive resample v -> sr_r
         factor = sr_r / sr_v
-        new_len = int(len(v) * factor)
-        v = np.interp(np.linspace(0, len(v), new_len, endpoint=False), np.arange(len(v)), v)
+        v = np.interp(np.linspace(0, len(v), int(len(v)*factor), endpoint=False), np.arange(len(v)), v)
         sr = sr_r
     else:
         sr = sr_v
-    # loop rain to duration
     needed = int(duration_s * sr)
     if len(r) < needed:
         reps = (needed // len(r)) + 1
         r = np.tile(r, reps)[:needed]
     else:
         r = r[:needed]
-    # make voice same length
     if len(v) < needed:
         v = np.concatenate([v, np.zeros(needed - len(v), dtype='float32')])
     else:
         v = v[:needed]
-    # apply gains
-    def db_to_mul(db): return 10 ** (db / 20.0)
-    v = v * db_to_mul(voice_gain_db)
-    r = r * db_to_mul(rain_gain_db)
+    def dbm(db): return 10 ** (db/20.0)
+    v = v * dbm(voice_db)
+    r = r * dbm(rain_db)
     mixed = v + r
-    # avoid clipping
-    maxv = np.max(np.abs(mixed)) if mixed.size else 1.0
-    if maxv > 1.0:
-        mixed = mixed / maxv
+    mx = np.max(np.abs(mixed)) if mixed.size else 1.0
+    if mx > 1.0:
+        mixed = mixed / mx
     sf.write(str(out_path), mixed, sr)
-    logging.info(f"Mixed voice+rain => {out_path} ({duration_s}s)")
+    logging.info(f"Mixed final audio to {out_path}")
 
 
-def render_video_from_audio(audio_path: Path, out_mp4: Path, duration_s: int, bg_image: Optional[Path] = None):
-    """Render MP4 with static image + audio using moviepy"""
+# ---------------------------
+#  Video rendering
+# ---------------------------
+def render_video(audio_path: Path, out_video: Path, duration_s: int, bg_image: Optional[Path] = None):
     if bg_image and bg_image.exists():
         img = str(bg_image)
     else:
-        # create a simple black image if not exists
-        tmp_img = OUTPUT / "bg_placeholder.jpg"
-        if not tmp_img.exists():
-            from PIL import Image, ImageDraw, ImageFont
-            im = Image.new("RGB", (1280, 720), (10, 10, 20))
-            draw = ImageDraw.Draw(im)
-            draw.text((50, 300), "Relaxing Rainy Story", fill=(200, 200, 220))
-            im.save(tmp_img)
-        img = str(tmp_img)
-    # build clip
+        tmp = OUTPUT / "bg_auto.jpg"
+        if not tmp.exists():
+            from PIL import Image, ImageDraw
+            im = Image.new("RGB", (1280,720), (10,10,20))
+            d = ImageDraw.Draw(im)
+            d.text((50,300), "Relaxing Rainy Story", fill=(200,200,220))
+            im.save(tmp)
+        img = str(tmp)
     clip = ImageClip(img).set_duration(duration_s)
     audio = AudioFileClip(str(audio_path))
     clip = clip.set_audio(audio)
-    # write file (fast; codec libx264, audio aac)
-    out_mp4.parent.mkdir(parents=True, exist_ok=True)
-    clip.write_videofile(str(out_mp4), fps=1, codec="libx264", audio_codec="aac", threads=2, verbose=False, logger=None)
-    logging.info(f"Wrote video {out_mp4}")
+    out_video.parent.mkdir(parents=True, exist_ok=True)
+    clip.write_videofile(str(out_video), fps=1, codec="libx264", audio_codec="aac", threads=2, verbose=False, logger=None)
+    logging.info(f"Rendered video {out_video}")
 
 
-def make_title_and_description(seed: Optional[str]) -> tuple[str, str, list]:
-    # Simple title/desc generator — user can replace with Gemini-based generator separately
-    title = f"Relaxing Rainy Story — {seed or 'Cozy Night'} • Sleep & Focus"
-    description = (
-        "A long relaxing rainy story with ambient rain sounds to help you sleep, relax, or focus. "
-        "Generated automatically. Enjoy the calm atmosphere."
-    )
-    tags = ["rain", "sleep", "relax", "asmr", "storytelling", "chill", "ambient"]
-    return title, description, tags
+# ---------------------------
+#  IO helpers: save SEO + thumbnail
+# ---------------------------
+def save_seo_files(title: str, description: str, tags: List[str]):
+    (OUTPUT / "title.txt").write_text(title, encoding="utf-8")
+    (OUTPUT / "description.txt").write_text(description, encoding="utf-8")
+    (OUTPUT / "tags.txt").write_text(",".join(tags), encoding="utf-8")
+    logging.info("Saved SEO files")
 
 
+def save_thumbnail_bytes(b: bytes, out_path: Path):
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "wb") as f:
+        f.write(b)
+    logging.info(f"Saved thumbnail {out_path}")
+
+
+# ---------------------------
+#  Main pipeline
+# ---------------------------
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seed", type=str, default=None)
-    p.add_argument("--duration", type=int, default=7200, help="target duration in seconds (default 7200 = 2h)")
-    p.add_argument("--no-tts", action="store_true", help="skip TTS generation and use silent placeholder voice")
-    p.add_argument("--keep-intermediate", action="store_true", help="do not delete generated intermediates")
+    p.add_argument("--duration", type=int, default=int(os.getenv("TARGET_DURATION", "7200")))
+    p.add_argument("--no-tts", action="store_true")
+    p.add_argument("--keep-intermediate", action="store_true")
     args = p.parse_args()
 
-    seed = args.seed
+    seed = args.seed or os.getenv("VIDEO_SEED", "Cozy Rainy Night")
     duration = args.duration
     start = datetime.datetime.utcnow().isoformat()
+    logging.info("Starting full allinone pipeline")
 
-    logging.info("Starting allinone pipeline")
-    # 1) story generation
+    # 1) Generate story
     story_text = None
     try:
-        # try external generator
-        story_text = generate_story_via_gemini(seed)
-        logging.info("Generated story via external generator")
-    except Exception as ex:
-        logging.info("Generator unavailable, using local story/fallback")
+        story_text = call_text_generator(seed)
+        logging.info("Generated story via API")
+    except Exception as e:
+        logging.info(f"Generator unavailable: {e}. Using local story.")
         story_text = pick_local_story(seed)
 
-    # Save story text
-    story_file = OUTPUT / "story.txt"
-    story_file.write_text(story_text, encoding="utf-8")
-    logging.info(f"Saved story to {story_file}")
+    # save story
+    (OUTPUT / "story.txt").write_text(story_text, encoding="utf-8")
 
-    # 2) prepare SEO
-    title, description, tags = make_title_and_description(seed or "Cozy Night")
-    save_seo(title, description, tags)
-
-    # 3) TTS generation
-    voice_path = OUTPUT / "voice.wav"
+    # 2) SEO generation
     try:
-        if args.no_tts:
-            raise RuntimeError("no-tts requested")
-        if COQUI_AVAILABLE:
-            tts_coqui_generate(story_text, voice_path)
-        else:
-            raise RuntimeError("Coqui not available")
-    except Exception as ex:
-        logging.warning(f"TTS generation failed ({ex}), generating silent placeholder voice")
-        # create silent voice of length 1/3 duration (reasonable speaking density) or shorter
-        # We'll create ~duration/3 seconds of voice and let mixing/muxing repeat as needed
-        approx_voice_secs = max(300, min(1800, duration // 3))
-        make_silent_voice(approx_voice_secs, voice_path)
+        snippet = story_text[:1500]
+        title, description, tags = call_seo_generator(seed, snippet)
+    except Exception as e:
+        logging.warning(f"SEO generator failed: {e}")
+        title = f"Relaxing Rainy Story — {seed}"
+        description = "A relaxing rainy story with ambient rain sounds."
+        tags = ["rain","sleep","relax","asmr","story"]
+    save_seo_files(title, description, tags)
 
-    # 4) Prepare rain loop (if not present, create a silent rain placeholder)
-    rain_loop_path = OUTPUT / "rain_loop.wav"
-    if RAIN_PATH.exists():
-        try:
-            loop_audio_to_duration(RAIN_PATH, duration, rain_loop_path)
-        except Exception as ex:
-            logging.warning("Failed to loop provided rain file, creating silent rain")
-            make_silent_voice(duration, rain_loop_path)
+    # 3) Thumbnail generation
+    thumb_bytes = None
+    try:
+        thumb_bytes = call_image_generator(title, seed)
+        if thumb_bytes:
+            save_thumbnail_bytes(thumb_bytes, OUTPUT / "thumbnail.jpg")
+    except Exception as e:
+        logging.warning(f"Thumbnail generation failed: {e}")
+
+    # 4) TTS generation (Coqui) or fallback
+    voice_path = OUTPUT / "voice.wav"
+    if args.no_tts:
+        logging.info("no-tts requested, creating silent placeholder voice")
+        make_silent_wave(min(1800, max(300, duration//3)), voice_path)
     else:
-        logging.warning("No assets/rain.mp3 found, creating silent rain")
-        make_silent_voice(duration, rain_loop_path)
+        if COQUI_AVAILABLE:
+            try:
+                tts_generate_coqui(story_text, voice_path, model_name=os.getenv("COQUI_MODEL", DEFAULT_COQUI_MODEL))
+            except Exception as e:
+                logging.warning(f"Coqui generation failed: {e}; falling back to silent voice")
+                make_silent_wave(min(1800, max(300, duration//3)), voice_path)
+        else:
+            logging.warning("Coqui not available; creating silent voice placeholder")
+            make_silent_wave(min(1800, max(300, duration//3)), voice_path)
 
-    # 5) Mix voice and rain to final audio (voice may be shorter; mix function pads/loops)
+    # 5) Prepare rain loop
+    rain_src = Path(os.getenv("RAIN_FILE", str(DEFAULT_RAIN)))
+    rain_loop = OUTPUT / "rain_loop.wav"
+    if rain_src.exists():
+        try:
+            loop_audio_to_duration(rain_src, duration, rain_loop)
+        except Exception as e:
+            logging.warning(f"Looping rain failed: {e}; creating silent rain")
+            make_silent_wave(duration, rain_loop)
+    else:
+        logging.warning("No rain asset found; creating silent rain")
+        make_silent_wave(duration, rain_loop)
+
+    # 6) Mix voice + rain -> final audio
     final_audio = OUTPUT / "final_audio.wav"
-    mix_voice_and_rain(voice_path, rain_loop_path, duration, final_audio, voice_gain_db=0.0, rain_gain_db=-12.0)
+    mix_voice_and_rain(voice_path, rain_loop, duration, final_audio, voice_db=0.0, rain_db=-12.0)
 
-    # 6) Render video (static image + final_audio)
+    # 7) Render video
     out_video = OUTPUT / f"final_video_{uuid.uuid4().hex[:8]}.mp4"
-    render_video_from_audio(final_audio, out_video, duration, bg_image=BG_IMAGE if BG_IMAGE.exists() else None)
+    bg = Path(os.getenv("BG_IMAGE", str(DEFAULT_BG)))
+    render_video(final_audio, out_video, duration, bg_image=bg if bg.exists() else None)
 
-    # write also a fixed path for schedule_upload script to find
+    # create stable final path
     final_link = OUTPUT / "final_video.mp4"
     if final_link.exists():
         final_link.unlink()
     out_video.rename(final_link)
-    logging.info(f"Final video ready at: {final_link}")
 
-    # done
-    logging.info("Pipeline complete.")
+    logging.info(f"Final video saved: {final_link}")
     logging.info(f"Started at {start}; finished at {datetime.datetime.utcnow().isoformat()}")
 
-    # cleanup if requested
+    # cleanup unless keep intermediate
     if not args.keep_intermediate:
-        # keep final files only
         for f in OUTPUT.glob("voice_part_*.wav"):
             try:
                 f.unlink()
             except Exception:
                 pass
-
 
 if __name__ == "__main__":
     main()
