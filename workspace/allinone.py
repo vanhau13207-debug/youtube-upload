@@ -145,4 +145,70 @@ def render_video(audio_path: Path, image_path: Path, out_path: Path, duration: i
 # -------------------------------------
 def main():
     seed = "cozy rainy night"
-    du
+    duration = 7200
+
+    logging.info("🔥 Gemini generating story...")
+    story = gemini_text(
+        "Viết một câu chuyện dài, chill, kể chậm, nhẹ nhàng, phù hợp để nghe lúc ngủ. "
+        "Chủ đề: " + seed +
+        ". Viết rất dài, đọc hết sẽ gần 1 tiếng."
+    )
+
+    (OUTPUT / "story.txt").write_text(story, encoding="utf-8")
+
+    logging.info("🔥 Gemini generating SEO...")
+    seo = gemini_text(
+        "Tạo SEO YouTube cho video kể chuyện nền tiếng mưa dựa trên nội dung sau:\n\n"
+        + story[:2000] +
+        "\n\nTrả về JSON: {title:'', description:'', tags:[]}"
+    )
+    try:
+        js = json.loads(seo)
+    except:
+        js = {
+            "title": "Relaxing Rainy Story",
+            "description": "Rainy night story auto generated.",
+            "tags": ["rain", "sleep", "asmr"]
+        }
+
+    (OUTPUT / "title.txt").write_text(js["title"], encoding="utf-8")
+    (OUTPUT / "description.txt").write_text(js["description"], encoding="utf-8")
+    (OUTPUT / "tags.txt").write_text(",".join(js.get("tags", [])), encoding="utf-8")
+
+    logging.info("🔥 Gemini generating thumbnail...")
+    img_bytes = gemini_image("cinematic cozy rainy night, warm lights, soft, anime style, no text")
+    thumb = OUTPUT / "thumbnail.jpg"
+    thumb.write_bytes(img_bytes)
+
+    logging.info("🔥 TTS...")
+    voice = OUTPUT / "voice.wav"
+    try:
+        coqui_tts(story, voice)
+    except:
+        make_silent(1800, voice)
+
+    logging.info("🔥 Rain loop...")
+    rain = ASSETS / "rain.mp3"
+    rain_loop = OUTPUT / "rain_loop.wav"
+    if rain.exists():
+        r, sr = sf.read(str(rain), dtype="float32")
+        total = duration * sr
+        reps = int(total // len(r)) + 1
+        full = np.tile(r, reps)[:total]
+        sf.write(rain_loop, full, sr)
+    else:
+        make_silent(duration, rain_loop)
+
+    logging.info("🔥 Mix...")
+    final_audio = OUTPUT / "final_audio.wav"
+    mix_voice_rain(voice, rain_loop, duration, final_audio)
+
+    logging.info("🔥 Render video...")
+    final_video = OUTPUT / "final_video.mp4"
+    render_video(final_audio, thumb, final_video, duration)
+
+    logging.info("🔥 DONE — final_video.mp4 created.")
+
+
+if __name__ == "__main__":
+    main()
