@@ -75,6 +75,19 @@ jobs:
 
           # ⭐ SAU ĐÓ mới được cài requirements_final
           pip install --no-cache-dir -r requirements_final.txt
+      - name: DEBUG — Scan for EVERY requirements_final.txt
+        run: |
+          echo "===== SCANNING FOR requirements_final.txt ====="
+          find . -name "requirements_final.txt" -print
+
+      - name: DEBUG — Show requirements file actually used
+        run: |
+          echo "===== CONTENT OF requirements_final.txt ====="
+          if [ -f requirements_final.txt ]; then
+            cat requirements_final.txt
+          else
+            echo "⚠️ KHÔNG TÌM THẤY requirements_final.txt Ở ROOT"
+          fi
 
       - name: Run allinone.py
         env:
