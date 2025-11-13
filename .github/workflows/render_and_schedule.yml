@@ -1,59 +1,44 @@
-name: Auto Render & Schedule Upload (3 Times/Day)
+name: Auto Render & Schedule Upload
 
 on:
-  workflow_dispatch:
   schedule:
-    # Run 2 hours before upload time:
-    # VN upload: 08:00, 16:00, 23:00
-    # Run at: 06:00, 14:00, 21:00 VN
-    # = 23:00, 7:00, 14:00 UTC
-    - cron: "0 23,7,14 * * *"
+    - cron: "0 23 * * *"
+    - cron: "0 7 * * *"
+    - cron: "0 14 * * *"
+  workflow_dispatch:
 
 jobs:
-  build-and-run:
+  build-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Cache TTS Models
+        uses: actions/cache@v3
         with:
-          python-version: "3.10"
+          path: ~/.local/share/tts
+          key: tts-model-cache
 
-      - name: Install system dependencies
+      - name: Clear pip cache
+        run: pip cache purge || true
+
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
-      - name: Debug requirements file
-        run: |
-          echo "=== requirements_final.txt ==="
-          cat requirements_final.txt || true
-
-          echo "=== requirements.txt ==="
-          cat requirements.txt || true
-
-          echo "=== find all req files ==="
-          find . -name "*require*" -maxdepth 3
-
-
-      - name: Install Python requirements
-        run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install --no-cache-dir -r requirements_final.txt
-          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
-      - name: Render full chill video + thumbnail + SEO
+      - name: Render Chill Video
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TARGET_DURATION: "7200"   # 2 hours
         run: |
-          python workspace/allinone_gemini.py
+          python workspace/allinone.py
 
-      - name: Schedule upload on YouTube at correct VN time
+      - name: Schedule YouTube Upload
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
@@ -61,7 +46,7 @@ jobs:
         run: |
           python workspace/schedule_upload.py
 
-      - name: Upload backup artifacts
+      - name: Upload artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: chill-output
