@@ -1,13 +1,19 @@
-requests
 moviepy==1.0.3
-Pillow==9.5.0
-numpy
-scipy
-soundfile
+Pillow==10.4.0
+requests==2.32.3
+
+# Coqui TTS
 TTS==0.15.6
 torch==2.0.1
 torchaudio==2.0.2
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-opencv-python-headless
+numpy==1.24.4
+soundfile==0.12.1
+scipy==1.10.1
+numba==0.57.1
+llvmlite==0.40.1
+
+# Google API upload
+google-api-python-client==2.111.0
+google-auth==2.29.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
