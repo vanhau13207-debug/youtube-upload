@@ -13,6 +13,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: DEBUG — Scan for EVERY requirements_final.txt
+        run: |
+          echo "===== SEARCHING FILES NAMED requirements_final.txt ====="
+          find . -type f -name "requirements_final.txt" -print -exec echo "--- CONTENT:" \; -exec cat {} \; -exec echo "------------------" \;
 
       - name: Set up Python 3.9
         uses: actions/setup-python@v5
