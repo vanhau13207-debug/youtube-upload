@@ -34,6 +34,13 @@ jobs:
 
       - name: Print requirements actually used
         run: cat requirements_final.txt
+      - name: DEBUG — Show requirements file actually used
+        run: |
+          echo "======= REQUIREMENTS_FINAL.TXT GH ACTIONS ĐANG DÙNG ======="
+          ls -R .
+          echo "----------------------------------------------------------"
+          cat requirements_final.txt || echo "Không tìm thấy file!"
+        
 
       - name: Install Python dependencies
         run: |
