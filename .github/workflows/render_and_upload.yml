@@ -14,7 +14,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ⭐ BẮT BUỘC: ép dùng Python 3.10
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -23,20 +22,7 @@ jobs:
       - name: Verify Python version
         run: python3 --version
 
-      - name: Clear pip cache & numpy leftovers
-        run: |
-          pip cache purge || true
-          rm -rf ~/.cache/pip
-          rm -rf /usr/local/lib/python3.10/site-packages/numpy*
-          rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
-
-      - name: Install numpy 1.22.0 (auto find correct wheel)
-        run: |
-          pip uninstall -y numpy || true
-          WHEEL_URL=$(curl -s https://pypi.org/pypi/numpy/1.22.0/json | jq -r '.releases["1.22.0"][] | select(.filename | contains("cp310") and contains("manylinux")) | .url')
-          wget "$WHEEL_URL" -O numpy122.whl
-          pip install numpy122.whl
-
+      # ❗ Không cần xoá numpy nữa
       - name: Install system dependencies
         run: |
           sudo apt-get update
