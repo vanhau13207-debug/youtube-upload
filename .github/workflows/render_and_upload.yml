@@ -22,17 +22,20 @@ jobs:
       - name: Verify Python version
         run: python3 --version
 
-      # ❗ Không cần xoá numpy nữa
-      - name: Install system dependencies
+      - name: Install system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
-      - name: Clear ALL pip cache (force fresh env)
+
+      - name: Clear pip cache (IMPORTANT)
         run: |
           pip cache purge || true
           rm -rf ~/.cache/pip || true
 
-      - name: Install Python deps
+      - name: Print requirements actually used
+        run: cat requirements_final.txt
+
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements_final.txt
