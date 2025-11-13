@@ -30,10 +30,11 @@ jobs:
           rm -rf /usr/local/lib/python3.10/site-packages/numpy*
           rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
 
-      - name: Install numpy 1.22.0
+      - name: Install numpy 1.22.0 (auto find correct wheel)
         run: |
           pip uninstall -y numpy || true
-          wget https://files.pythonhosted.org/packages/8d/6f/1b230b2a90e6aa1a0b08fc5daa9bc15ba413e3043037d67c130f7e511b8e/numpy-1.22.0-cp310-cp310-manylinux_2_17_x86_64.whl -O numpy122.whl
+          WHEEL_URL=$(curl -s https://pypi.org/pypi/numpy/1.22.0/json | jq -r '.releases["1.22.0"][] | select(.filename | contains("cp310") and contains("manylinux")) | .url')
+          wget "$WHEEL_URL" -O numpy122.whl
           pip install numpy122.whl
 
       - name: Install system dependencies
