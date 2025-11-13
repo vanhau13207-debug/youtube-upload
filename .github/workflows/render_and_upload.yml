@@ -43,6 +43,14 @@ jobs:
           ls -R .
           echo "----------------------------------------------------------"
           cat requirements_final.txt || echo "Không tìm thấy file!"
+      - name: DEBUG — show all files
+        run: |
+          echo "===== LIST FILES IN REPO ====="
+          ls -R .
+          echo "=============================="
+          echo "===== SHOW ALL REQUIREMENTS FILES ====="
+          find . -maxdepth 4 -type f -name "requirements*.txt" -print -exec cat {} \;
+          echo "========================================"
 
       # ⭐⭐ BLOCK FIX LỖI NUMPY CHUẨN CHỈNH CHO COQUI ⭐⭐
       - name: Install Python dependencies (Coqui FIXED)
