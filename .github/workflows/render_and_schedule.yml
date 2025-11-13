@@ -2,9 +2,9 @@ name: Auto Render & Schedule Upload
 
 on:
   schedule:
-    - cron: "0 23 * * *"   # 06h VN
-    - cron: "0 7 * * *"    # 14h VN
-    - cron: "0 14 * * *"   # 21h VN
+    - cron: "0 23 * * *"
+    - cron: "0 7 * * *"
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -16,44 +16,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cache TTS models để không phải download lại
       - name: Cache Coqui TTS models
         uses: actions/cache@v3
         with:
           path: ~/.local/share/tts
           key: tts-model-cache
 
-      # Xóa tất cả numpy & cache pip
-      - name: Remove ALL pip cache and numpy leftovers
+      - name: REMOVE ALL NUMPY + PIP CACHE (3 LẦN CHO CHẮC)
         run: |
-          pip cache purge || true
+          pip uninstall -y numpy || true
+          pip uninstall -y numpy || true
+          pip uninstall -y numpy || true
           rm -rf ~/.cache/pip
           rm -rf /usr/local/lib/python3.10/site-packages/numpy*
           rm -rf /usr/local/lib/python3.10/dist-packages/numpy*
+          pip cache purge || true
 
-      # Ép pip dùng Numpy 1.22.0 để TTS hoạt động
-      - name: Force override numpy version
+      - name: FORCE INSTALL NUMPY 1.22.0 (ÉP CỨNG)
         run: |
-          echo "numpy==1.22.0" > numpy_override.txt
+          echo "numpy==1.22.0" > numpy_fix.txt
           pip install --upgrade pip
-          pip install --no-cache-dir --force-reinstall --no-deps -r numpy_override.txt
+          pip install --no-cache-dir --force-reinstall --no-deps -r numpy_fix.txt
 
-      # Cài toàn bộ deps nhưng BỎ QUA dependency resolver của pip
-      - name: Install deps ignoring dependency resolver
+      - name: INSTALL REQUIREMENTS WITHOUT DEPS (CẤM PIP KÉO VỀ 1.24.4)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
           pip install --no-cache-dir --no-deps -r requirements_final.txt
 
-      # Render video chill nền mưa (all-in-one)
-      - name: Render Chill Video
+      - name: RENDER VIDEO
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python workspace/allinone.py
 
-      # Upload video + schedule thời gian publish
-      - name: Schedule YouTube Upload
+      - name: SCHEDULE YOUTUBE UPLOAD
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
@@ -61,8 +58,7 @@ jobs:
         run: |
           python workspace/schedule_upload.py
 
-      # Lưu output để xem lại khi debug
-      - name: Upload artifact (backup)
+      - name: BACKUP OUTPUT
         uses: actions/upload-artifact@v4
         with:
           name: chill-output
