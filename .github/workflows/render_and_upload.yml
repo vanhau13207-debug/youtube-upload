@@ -13,10 +13,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: DEBUG — Scan for EVERY requirements_final.txt
-        run: |
-          echo "===== SEARCHING FILES NAMED requirements_final.txt ====="
-          find . -type f -name "requirements_final.txt" -print -exec echo "--- CONTENT:" \; -exec cat {} \; -exec echo "------------------" \;
 
       - name: Set up Python 3.9
         uses: actions/setup-python@v5
@@ -26,69 +22,49 @@ jobs:
       - name: Verify Python version
         run: python3 --version
 
-      - name: Install system packages
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Clear pip cache (IMPORTANT)
+      # -------------------------------
+      # FORCE RESET TO GUARANTEE CLEAN ENV
+      # -------------------------------
+      - name: Hard reset pip & numpy
         run: |
+          pip uninstall -y numpy || true
           pip cache purge || true
           rm -rf ~/.cache/pip || true
           rm -rf /usr/local/lib/python3.9/dist-packages/numpy* || true
           rm -rf /usr/local/lib/python3.9/site-packages/numpy* || true
 
-      - name: Print requirements actually used
-        run: cat requirements_final.txt
-
-      - name: DEBUG — Show requirements file actually used
+      # -------------------------------
+      # SHOW EXACT FILE LOADED
+      # -------------------------------
+      - name: DEBUG — show requirements_final.txt
         run: |
-          echo "======= REQUIREMENTS_FINAL.TXT GH ACTIONS ĐANG DÙNG ======="
-          ls -R .
-          echo "----------------------------------------------------------"
-          cat requirements_final.txt || echo "Không tìm thấy file!"
-      - name: DEBUG — show all files
-        run: |
-          echo "===== LIST FILES IN REPO ====="
-          ls -R .
-          echo "=============================="
-          echo "===== SHOW ALL REQUIREMENTS FILES ====="
-          find . -maxdepth 4 -type f -name "requirements*.txt" -print -exec cat {} \;
-          echo "========================================"
+          echo "===== CONTENT OF requirements_final.txt ====="
+          cat requirements_final.txt
 
-      # ⭐⭐ BLOCK FIX LỖI NUMPY CHUẨN CHỈNH CHO COQUI ⭐⭐
-      - name: Install Python dependencies (FIXED)
+      # -------------------------------
+      # INSTALL DEPENDENCIES (FIXED)
+      # -------------------------------
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip setuptools wheel
 
-          # Xóa sạch numpy để tránh pip ép bản 1.26.4
-          pip uninstall -y numpy || true
-          rm -rf ~/.cache/pip || true
-          rm -rf /usr/local/lib/python3.9/dist-packages/numpy* || true
-          rm -rf /usr/local/lib/python3.9/site-packages/numpy* || true
+          # numpy đúng bản Coqui TTS yêu cầu
+          pip install numpy==1.21.6
 
-          # ⭐ CÀI NUMPY 1.21.6 TRƯỚC (TTS yêu cầu)
-          pip install --no-cache-dir numpy==1.21.6
+          # scipy tương thích
+          pip install scipy==1.10.0
 
-          # ⭐ CÀI scipy phiên bản tương thích
-          pip install --no-cache-dir scipy==1.10.0
+          # sau đó cài bộ requirements
+          pip install -r requirements_final.txt --no-cache-dir --no-deps
 
-          # ⭐ SAU ĐÓ mới được cài requirements_final
-          pip install --no-cache-dir -r requirements_final.txt
-      - name: DEBUG — Scan for EVERY requirements_final.txt
-        run: |
-          echo "===== SCANNING FOR requirements_final.txt ====="
-          find . -name "requirements_final.txt" -print
-
-      - name: DEBUG — Show requirements file actually used
-        run: |
-          echo "===== CONTENT OF requirements_final.txt ====="
-          if [ -f requirements_final.txt ]; then
-            cat requirements_final.txt
-          else
-            echo "⚠️ KHÔNG TÌM THẤY requirements_final.txt Ở ROOT"
-          fi
-
+      # -------------------------------
+      # RUN BUILDER
+      # -------------------------------
       - name: Run allinone.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
