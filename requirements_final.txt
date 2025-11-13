@@ -22,3 +22,6 @@ aiohttp==3.9.5
 tqdm==4.66.5
 python-dotenv==1.0.1
 urllib3==1.26.18
+idna==3.7
+charset-normalizer==3.3.2
+chardet==5.2.0
