@@ -213,7 +213,7 @@ def generate_tts_coqui(text: str, out_wav: Path, model: str = COQUI_MODEL):
     for i, p in enumerate(parts):
         tmp = out_wav.parent / f"voice_part_{i}.wav"
         logging.info(f"TTS chunk {i+1}/{len(parts)} ({len(p)} chars)")
-        tts.tts_to_file(text=p, file_path=str(tmp))
+        tts.tts_to_file(text=p, file_path=str(tmp), speaker="p225")
         tmp_files.append(tmp)
     # concat
     arrays = []
@@ -387,7 +387,7 @@ def main():
         logging.warning(f"TTS failed: {e}; creating silent voice placeholder (30s)")
         # create reasonable silent placeholder (30s) to avoid subsequent failures
         dur = min(60, max(10, int(est_secs)))  # make some silent if needed
-        silent(dur, voice_wav)
+        make_silent_wave(dur, voice_wav)
 
     # 6) compute durations
     try:
@@ -512,3 +512,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
