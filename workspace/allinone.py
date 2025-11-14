@@ -264,10 +264,10 @@ def generate_tts_coqui(text: str, out_wav: Path, model: str = COQUI_MODEL):
 
 # ---------- silent fallback ----------
     def make_silent_wave(seconds: int, out_wav: Path, sr: int = AUDIO_SR):
-    total = int(seconds * sr)
-    data = np.zeros((total,), dtype='float32')
-    sf.write(str(out_wav), data, sr)
-    logging.info(f"Created silent wave: {out_wav} ({seconds}s)"
+        total = int(seconds * sr)
+        data = np.zeros((total,), dtype='float32')
+        sf.write(str(out_wav), data, sr)
+        logging.info(f"Created silent wave: {out_wav} ({seconds}s)"
 # ---------- extract frame from mp4 ----------
     def extract_frame(mp4_path: Path, at_time: float, out_png: Path):
     """Extract frame at <at_time> from mp4_path → save to out_png."""
@@ -632,4 +632,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
