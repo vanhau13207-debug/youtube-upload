@@ -42,18 +42,26 @@ TTS_WPM = 150
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 # GEMINI TEXT
-def gemini_text(prompt: str, max_tokens=2048):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TEXT_MODEL}:generateText"
-    payload = {"prompt":{"text":prompt}, "maxOutputTokens":max_tokens}
-    r = requests.post(url, params={"key":GEMINI_KEY}, json=payload, timeout=60)
+def gemini_text(prompt: str):
+    if not GEMINI_KEY:
+        raise RuntimeError("Missing Gemini API key")
+
+    url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+
+    payload = {
+        "contents": [
+            {"parts": [{"text": prompt}]}
+        ]
+    }
+
+    r = requests.post(url, params={"key": GEMINI_KEY}, json=payload, timeout=60)
     r.raise_for_status()
+
     js = r.json()
     try:
-        cand = js["candidates"][0]["content"]
-        texts=[p.get("text","") for p in cand if "text" in p]
-        return "\n".join(texts)
+        return js["candidates"][0]["content"]["parts"][0]["text"]
     except:
-        return json.dumps(js)
+        return str(js)
 
 # GEMINI IMAGE
 def gemini_image(ref_b64: str):
@@ -273,3 +281,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
