@@ -75,7 +75,7 @@ def gemini_text(prompt: str, max_tokens: int = 2048) -> str:
     if not GEMINI_KEY:
         raise RuntimeError("GEMINI_API_KEY not set in env")
     # Use generateContent endpoint (v1)
-    url = f"https://generativelanguage.googleapis.com/v1/models/{GEMINI_TEXT_MODEL}:generateContent"
+   url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     payload = {
         "contents": [
             {"parts": [{"text": prompt}]}
@@ -112,7 +112,7 @@ def gemini_image_from_reference(img_b64: str, prompt_extra: str = "") -> bytes:
     if not GEMINI_KEY:
         raise RuntimeError("GEMINI_API_KEY not set")
     # Try v1 generateImage
-    url = f"https://generativelanguage.googleapis.com/v1/models/{GEMINI_IMAGE_MODEL}:generateImage"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_IMAGE_MODEL}:generateImage"
     payload = {
         "prompt": {
             "text": "Create a highly-clickable YouTube thumbnail for a chill/study/sleep rain ambience video. " + prompt_extra
@@ -512,4 +512,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
