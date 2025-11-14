@@ -60,7 +60,7 @@ def gemini_text(prompt: str):
         return str(js)
 # === FAST GEMINI IMAGE (Flash Image Model, super fast) ===
 def gemini_image(ref_b64: str):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateImage"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-image:generateImage"
 
     payload = {
         "prompt": {
@@ -390,5 +390,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
