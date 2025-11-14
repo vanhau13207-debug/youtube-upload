@@ -270,6 +270,7 @@ def make_silent_wave(seconds: int, out_wav: Path, sr: int = AUDIO_SR):
     sf.write(str(out_wav), data, sr)
     logging.info(f"Created silent wave: {out_wav} ({seconds}s)")
 
+
 # ---------- extract frame from mp4 ----------
 from PIL import Image
 
@@ -291,7 +292,8 @@ def extract_frame(mp4_path: Path, at_time: float, out_png: Path):
     except Exception:
         pass
 
-    logging.info(f"Extracted frame at {t}s -> {out_png}")
+    logging.info(f"Extracted frame at {t}s → {out_png}")
+
 
 
 # ---------- loop audio to duration ----------
@@ -638,6 +640,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
