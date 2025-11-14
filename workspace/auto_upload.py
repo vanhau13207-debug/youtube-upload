@@ -21,23 +21,24 @@ CHANNEL_ID = os.getenv("YT_CHANNEL_ID", "")
 def get_youtube_service():
     if not (CLIENT_ID and CLIENT_SECRET and REFRESH_TOKEN):
         raise RuntimeError("Missing YouTube OAuth secrets")
-    creds = Credentials(
-        token=None,
-        refresh_token=REFRESH_TOKEN,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        SCOPES = [
+  SCOPES = [
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl"
-        ]
+]
 
-    )
-    request = Request()
-    creds.refresh(request)
-    youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
-    return youtube
+creds = Credentials(
+    token=None,
+    refresh_token=REFRESH_TOKEN,
+    token_uri="https://oauth2.googleapis.com/token",
+    client_id=CLIENT_ID,
+    client_secret=CLIENT_SECRET,
+    scopes=SCOPES
+)
+
+creds.refresh(Request())
+youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+return youtube
 
 def load_seo():
     title = (OUTPUT / "title.txt").read_text(encoding="utf-8") if (OUTPUT / "title.txt").exists() else "Relaxing Rainy Story"
