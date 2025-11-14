@@ -60,18 +60,11 @@ def gemini_text(prompt: str):
         return str(js)
 # === FAST GEMINI IMAGE (Flash Image Model, super fast) ===
 def gemini_image(ref_b64: str):
-    """
-    Generate a FAST high-quality thumbnail using gemini-2.0-flash-image.
-    Never hangs. Always returns within 3–10 seconds.
-    """
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-image:generateImage"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateImage"
 
     payload = {
         "prompt": {
-            "text": (
-                "Generate a cinematic high CTR YouTube thumbnail for a relaxing rain ambience scene. "
-                "Enhance colors, clarity, contrast, and lighting. No text. Keep original composition."
-            )
+            "text": "Enhance into a high CTR cinematic rain ambience thumbnail. No text. Keep composition."
         },
         "image_context": {
             "reference_images": [
@@ -82,12 +75,10 @@ def gemini_image(ref_b64: str):
     }
 
     try:
-        r = requests.post(url, params={"key": GEMINI_KEY}, json=payload, timeout=12)
+        r = requests.post(url, params={"key": GEMINI_KEY}, json=payload, timeout=20)
         r.raise_for_status()
         js = r.json()
-        b64 = js["images"][0]["imageBytes"]
-        return base64.b64decode(b64)
-
+        return base64.b64decode(js["images"][0]["imageBytes"])
     except Exception as e:
         logging.warning(f"Thumbnail generation failed: {e}")
         return None
@@ -297,10 +288,12 @@ def render_video(bg: Path, audio: Path, out: Path, dur: int):
         "-t", str(dur),
         "-c:v", "libx264",
         "-preset", "veryfast",
+        "-crf", "22",
+        "-r", "24",
         "-c:a", "aac",
         "-shortest",
         str(out)
-    ]
+]
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     logging.info(f"Rendered final video → {out}")
 
@@ -397,4 +390,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
